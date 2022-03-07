@@ -14,7 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 /*
- * aggregate.c - to aggregate a list of IP networks (must be sorted)
+ * aggregate.c - to aggregate a list of IP networks (must be sorted, and larger
+ * 		 than or equal to /24)
  */
 
 #include <sys/types.h>
@@ -30,6 +31,7 @@
 #include <unistd.h>
 
 #include <err.h>
+#include <ctype.h>
 
 int class_c_to_cidr(int);
 int bitboundary(int);
@@ -101,6 +103,14 @@ main(int argc, char *argv[])
 	}
 
 	while (fgets(buf, sizeof(buf), f) != NULL) {
+		p = &buf[0];
+
+		while (isspace(*p))
+			p++;
+		
+		if (*p == '#')
+			continue;
+
 		len = strlen(buf);		
 	
 		if (buf[len - 1] == '\n')
