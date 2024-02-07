@@ -1,0 +1,11 @@
+sipdiv.c is a small sip proxy that tries to compress (if specified with -c)
+an AVM fritzbox (because I didn't find the knob in fritz!OS to turn that on).
+Savings by compressing the Headers into SDP is about 70 bytes which is savings
+enough to fit the dang UDP packet through a wireguard tunnel without 
+fragmenting.  Because guess what?  Fritz!OS does not reassemble SIP fragments.
+
+I had to add this line to my pf.conf for this to work:
+
+pass in on vlan23 inet proto udp from any to 192.168.178.1 port 5060 divert-packet port 22222
+
+Cheers!
