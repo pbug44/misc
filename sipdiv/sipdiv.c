@@ -26,7 +26,6 @@
  * 
  */
 
-//#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -237,8 +236,6 @@ main(int argc, char *argv[])
 	struct udphdr *udp;
 	struct sockaddr_in sin;
 
-
-
 	while ((ch = getopt(argc, argv, "cd")) != -1) {
 		switch (ch) {
 		case 'c':
@@ -248,7 +245,7 @@ main(int argc, char *argv[])
 			debug = 1;
 			break;
 		default:
-			fprintf(stderr, "usage: sipdiv [-c]\n");
+			fprintf(stderr, "usage: sipdiv [-c][-d]\n");
 			exit (1);
 		}
 	}
