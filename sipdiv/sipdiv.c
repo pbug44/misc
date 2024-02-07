@@ -582,6 +582,12 @@ new_payload(char *buf, int len)
 			if (np->flags & SIP_DIV_FLAG_BODY)
 				continue;
 
+			/* strip out known X- Headers, why do we need them? */
+			if (sip_compact && ((np->type == SIP_DIV_XAUSERAGENT) ||
+				(np->type == SIP_DIV_XACONTACT)))
+				continue;
+
+
 			if (tokens[i].type == np->type) {
 				if (np->flags & SIP_DIV_FLAG_COMPACT) {
 					memcpy(&tmpbuf, np->replace, np->replacelen);
