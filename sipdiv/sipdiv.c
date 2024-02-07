@@ -225,7 +225,7 @@ main(int argc, char *argv[])
 {
 	int savelen, len;
 	int ds, sslen = sizeof(struct sockaddr_in);
-	int ch;
+	int ch, debug = 0;
 	int iphl = sizeof(struct ip);
 	int udphl = sizeof(struct udphdr);
 
@@ -239,10 +239,13 @@ main(int argc, char *argv[])
 
 
 
-	while ((ch = getopt(argc, argv, "c")) != -1) {
+	while ((ch = getopt(argc, argv, "cd")) != -1) {
 		switch (ch) {
 		case 'c':
 			sip_compact = 1;
+			break;
+		case 'd':
+			debug = 1;
 			break;
 		default:
 			fprintf(stderr, "usage: sipdiv [-c]\n");
@@ -271,9 +274,8 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-#if 0
-	daemon(0,0);
-#endif
+	if (! debug)
+		daemon(0,0);
 
 	if (pledge("stdio inet unveil", NULL) == -1) {
 		perror("pledge");
