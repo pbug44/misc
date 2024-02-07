@@ -214,7 +214,8 @@ struct tok {
 int parse_payload(char *, int);
 int new_payload(char *, int);
 void destroy_payload(void);
-void add_header(char *, char *);
+void add_header(char *, char *, int);
+int find_header(int);
 
 int sip_compact = 0;
 char *useragent = "User-Agent: AVM\r\n";
@@ -348,29 +349,6 @@ main(int argc, char *argv[])
 		destroy_payload();
 
 
-#if 0
-		while (len > 1400) {
-			backup = memrchr(buf, '\n', len);
-			if (backup == NULL) {
-				printf("ruh roh\n");
-				len = savelen;
-
-				goto skip;
-			}
-				
-			len = backup - &buf[0];
-			len--;
-
-			if (len <= 1400) {
-				buf[len++] = '\r';
-				buf[len++] = '\n';
-				buf[len++] = '\r';
-				buf[len++] = '\n';
-
-				break;
-			}
-		}
-#endif
 		if (len > 1420)
 			fprintf(stderr, "ruh roh, len > 1420\n");
 
@@ -500,7 +478,8 @@ parse_payload(char *payload, int len)
 						n1->replacelen = strlen(n1->replace);
 					}
 
-					if (sip_compact == 1 && tokens[i].shortform != NULL) {
+					if ((sip_compact == 1) && 
+						(tokens[i].shortform != NULL)) {
 						int tokenlen = (n1->fieldlen - strlen(tokens[i].token)) + strlen(tokens[i].shortform);
 
 						n1->replace = malloc(tokenlen);
@@ -551,8 +530,12 @@ parse_payload(char *payload, int len)
 		len -= newlen;
 	} while (len >= 0);
 
-	if (sip_compact)
-		add_header("c:", " application/sdp\r\n");
+	if (sip_compact) {
+		if (! find_header(SIP_DIV_CONTENTTYPE)) {
+			add_header("Content-Type:", 
+				" application/sdp\r\n", SIP_DIV_CONTENTTYPE);
+		}
+	}
 
 	return (0);
 }
@@ -571,6 +554,16 @@ destroy_payload(void)
              SLIST_REMOVE_HEAD(&head, entries);
              free(n1);
 	}
+}
+
+int
+find_header(int type)
+{
+	SLIST_FOREACH(np, &head, entries) {
+		if (np->type == type)
+			return 1;
+	}
+	return 0;
 }
 
 int
@@ -629,13 +622,6 @@ new_payload(char *buf, int len)
 		if (!(np->flags & SIP_DIV_FLAG_BODY))
 			continue;
 
-#if 0
-		buf[offset++] = '\r';
-		buf[offset++] = '\n';
-		buf[offset++] = '\r';
-		buf[offset++] = '\n';
-#endif
-
 		memcpy(&tmpbuf, np->fields, np->fieldlen);
 		tmpbuf[np->fieldlen] = '\0';
 		if (tmpbuf[np->fieldlen - 2] == '\r')
@@ -651,7 +637,7 @@ new_payload(char *buf, int len)
 
 
 void
-add_header(char *header, char *contents)
+add_header(char *header, char *contents, int type)
 {
 	int len = strlen(header) + strlen(contents);
 
@@ -668,7 +654,7 @@ add_header(char *header, char *contents)
 	}
 
 	n1->fieldlen = len;
-	n1->type = SIP_DIV_CONTENTTYPE;
+	n1->type = type; 
 
 	memcpy(n1->fields, header, strlen(header));
 	memcpy((&n1->fields[strlen(header)]), 
