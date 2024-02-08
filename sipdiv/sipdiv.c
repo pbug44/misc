@@ -57,9 +57,11 @@
 #include <errno.h>
 #include <syslog.h>
 #include <time.h>
+#include <pwd.h>
 
 #include <ctype.h>
 
+#define SIP_DIV_USER		"_sipdiv"
 
 SLIST_HEAD(, sipdata) head;
 
@@ -152,61 +154,61 @@ struct tok {
 	char *token;
 	char *shortform;
 } tokens[] = {
-	{ SIP_DIV_STATUS, "YCVFDSAFEWQFQF", NULL	},
-	{ SIP_DIV_VIA, "Via:"	, "v:"			},
-	{ SIP_DIV_ROUTE		, "Route:", NULL },
-	{ SIP_DIV_FROM, "From:"	, "f:"			},
-	{ SIP_DIV_TO, "To:", "t:"				},
-	{ SIP_DIV_CALLERID, "Call-ID:", "i:"		},
-	{ SIP_DIV_CSEQ, "CSeq:", NULL				},
-	{ SIP_DIV_CONTACT, "Contact:", "m:"		},
-	{ SIP_DIV_AUTHORIZATION, "Authorization:", NULL	},
-	{ SIP_DIV_MAXFORWARDS, "Max-Forwards:", NULL	},
+	{ SIP_DIV_STATUS, "YCVFDSAFEWQFQF", NULL },
+	{ SIP_DIV_VIA, "Via:" , "v:" },
+	{ SIP_DIV_ROUTE , "Route:", NULL },
+	{ SIP_DIV_FROM, "From:" , "f:" },
+	{ SIP_DIV_TO, "To:", "t:" },
+	{ SIP_DIV_CALLERID, "Call-ID:", "i:" },
+	{ SIP_DIV_CSEQ, "CSeq:", NULL },
+	{ SIP_DIV_CONTACT, "Contact:", "m:" },
+	{ SIP_DIV_AUTHORIZATION, "Authorization:", NULL },
+	{ SIP_DIV_MAXFORWARDS, "Max-Forwards:", NULL },
 	{ SIP_DIV_EXPIRES , "Expires:" , NULL},
-	{ SIP_DIV_USERAGENT, "User-Agent:", NULL	},
-	{ SIP_DIV_SUPPORTED, "Supported:", NULL		},
-	{ SIP_DIV_ALLOWEVENTS, "Allow-Events:"	, "u:"	},
-	{ SIP_DIV_ALLOW, "Allow:", NULL			},
-	{ 	SIP_DIV_ACCEPT		, "Accept:", NULL },
-	{	SIP_DIV_ACCEPTENC	, "Accept-Encoding:", NULL },
-	{ SIP_DIV_ACCEPTCONTACT, "Accept-Contact:", "a:"	},
-	{ SIP_DIV_EVENT, "Event:" , "o:"		},
-	{ SIP_DIV_REFERTO, "Refer-To:"		, "r:"	},
-	{ SIP_DIV_REFERREDBY, "Referred-By:", "b:"	},
+	{ SIP_DIV_USERAGENT, "User-Agent:", NULL },
+	{ SIP_DIV_SUPPORTED, "Supported:", NULL },
+	{ SIP_DIV_ALLOWEVENTS, "Allow-Events:" , "u:" },
+	{ SIP_DIV_ALLOW, "Allow:", NULL },
+	{ SIP_DIV_ACCEPT , "Accept:", NULL },
+	{ SIP_DIV_ACCEPTENC , "Accept-Encoding:", NULL },
+	{ SIP_DIV_ACCEPTCONTACT, "Accept-Contact:", "a:" },
+	{ SIP_DIV_EVENT, "Event:" , "o:" },
+	{ SIP_DIV_REFERTO, "Refer-To:" , "r:" },
+	{ SIP_DIV_REFERREDBY, "Referred-By:", "b:" },
 	{ SIP_DIV_REJECTCONTACT, "Reject-Contact:", "j:" },
-	{ SIP_DIV_SUBJECT, "Subject:", "s:"		},
-	{	SIP_DIV_ALERTINFO	, "Alert-Info:", NULL },
-	{	SIP_DIV_CALLINFO	, "Call-Info:", NULL	},
-	{	SIP_DIV_DATE		, "Date:", NULL	},
-	{	SIP_DIV_ERRORINFO	, "Error-Info:", NULL	},
-	{	SIP_DIV_MAXBREADTH	, "Max-Breadth:", NULL },
-	{	SIP_DIV_ORGANIZATION	, "Organization:", NULL },
-	{	SIP_DIV_PRIORITY	, "Priority:", NULL	},
-	{	SIP_DIV_PROXYAUTHEN	, "Proxy-Authenticate:", NULL },
-	{	SIP_DIV_PROXYAUTHOR	, "Proxy-Authorization:", NULL },
-	{	SIP_DIV_PROXYREQ	, "Proxy-Require:", NULL },
-	{	SIP_DIV_RECORDROUTE	, "Record-Route:", NULL },
-	{	SIP_DIV_REASON		, "Reason:", NULL },
-	{	SIP_DIV_REQUIRE		, "Require:", NULL },
-	{	SIP_DIV_WWWAUTH		, "WWW-Authenticate:", NULL },
-	{	SIP_DIV_SECURECLIENT	, "Security-Client:", NULL },
-	{	SIP_DIV_SECUREVERIFY	, "Security-Verify:" , NULL },
-	{	SIP_DIV_SECURESERVER	, "Secure-Server:" , NULL },
-	{	SIP_DIV_ANSWERMODE	, "Answer-Mode:" , NULL },
-	{	SIP_DIV_PRIVANSWERMODE	, "Priv-Answer-Mode:" , NULL },
-	{	SIP_DIV_HISTORYINFO	, "History-Info:" , NULL },
-	{	SIP_DIV_PATH		, "Path:" , NULL },
-	{	SIP_DIV_IDENTITY	, "Identity:" , NULL },
-	{	SIP_DIV_IDENTITYINFO	, "Identity-Info:" , NULL },
-	{	SIP_DIV_PASSERTEDID	, "P-Asserted-Identity:" , NULL },
-	{	SIP_DIV_RESOURCEPRIO	, "Resource-Priority:" , NULL },
-	{	SIP_DIV_AUTHINFO	, "Auth-Info:" , NULL },
-	{ 	SIP_DIV_XAUSERAGENT	, "X-A-User-Agent:" , NULL },
-	{  	SIP_DIV_XACONTACT	, "X-A-Contact:" , NULL },
-	{ 	SIP_DIV_ACCEPTLANG	, "Accept-Language:" , NULL },
-	{ 	SIP_DIV_CONTENTENC	, "Content-Encoding:", "e:" },
-	{ SIP_DIV_CONTENTTYPE, "Content-Type:"	, "c:" },
-	{ 	SIP_DIV_CONTENTLEN	, "Content-Length:", "l:" },
+	{ SIP_DIV_SUBJECT, "Subject:", "s:" },
+	{ SIP_DIV_ALERTINFO , "Alert-Info:", NULL },
+	{ SIP_DIV_CALLINFO , "Call-Info:", NULL },
+	{ SIP_DIV_DATE , "Date:", NULL },
+	{ SIP_DIV_ERRORINFO , "Error-Info:", NULL },
+	{ SIP_DIV_MAXBREADTH , "Max-Breadth:", NULL },
+	{ SIP_DIV_ORGANIZATION , "Organization:", NULL },
+	{ SIP_DIV_PRIORITY , "Priority:", NULL },
+	{ SIP_DIV_PROXYAUTHEN , "Proxy-Authenticate:", NULL },
+	{ SIP_DIV_PROXYAUTHOR , "Proxy-Authorization:", NULL },
+	{ SIP_DIV_PROXYREQ , "Proxy-Require:", NULL },
+	{ SIP_DIV_RECORDROUTE , "Record-Route:", NULL },
+	{ SIP_DIV_REASON , "Reason:", NULL },
+	{ SIP_DIV_REQUIRE , "Require:", NULL },
+	{ SIP_DIV_WWWAUTH , "WWW-Authenticate:", NULL },
+	{ SIP_DIV_SECURECLIENT , "Security-Client:", NULL },
+	{ SIP_DIV_SECUREVERIFY , "Security-Verify:" , NULL },
+	{ SIP_DIV_SECURESERVER , "Secure-Server:" , NULL },
+	{ SIP_DIV_ANSWERMODE , "Answer-Mode:" , NULL },
+	{ SIP_DIV_PRIVANSWERMODE , "Priv-Answer-Mode:" , NULL },
+	{ SIP_DIV_HISTORYINFO , "History-Info:" , NULL },
+	{ SIP_DIV_PATH , "Path:" , NULL },
+	{ SIP_DIV_IDENTITY , "Identity:" , NULL },
+	{ SIP_DIV_IDENTITYINFO , "Identity-Info:" , NULL },
+	{ SIP_DIV_PASSERTEDID , "P-Asserted-Identity:" , NULL },
+	{ SIP_DIV_RESOURCEPRIO , "Resource-Priority:" , NULL },
+	{ SIP_DIV_AUTHINFO , "Auth-Info:" , NULL },
+	{ SIP_DIV_XAUSERAGENT , "X-A-User-Agent:" , NULL },
+	{ SIP_DIV_XACONTACT , "X-A-Contact:" , NULL },
+	{ SIP_DIV_ACCEPTLANG , "Accept-Language:" , NULL },
+	{ SIP_DIV_CONTENTENC , "Content-Encoding:", "e:" },
+	{ SIP_DIV_CONTENTTYPE, "Content-Type:" , "c:" },
+	{ SIP_DIV_CONTENTLEN , "Content-Length:", "l:" },
 	{ SIP_DIV_MAX, NULL, NULL }
 };
 
@@ -236,6 +238,7 @@ main(int argc, char *argv[])
 	struct ip *ip;
 	struct udphdr *udp;
 	struct sockaddr_in sin;
+	struct passwd *pw;
 
 	while ((ch = getopt(argc, argv, "cd")) != -1) {
 		switch (ch) {
@@ -275,6 +278,29 @@ main(int argc, char *argv[])
 	if (! debug)
 		daemon(0,0);
 
+
+	pw = getpwnam(SIP_DIV_USER);
+	if (pw == NULL) {
+		perror("getpwnam");
+		exit(1);
+	}
+
+	if (chroot(pw->pw_dir) == -1) {
+		perror("chroot");
+		exit(1);
+	}
+	if (chdir("/") == -1) {
+		perror("chdir");
+		exit(1);
+	}
+	if (setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) == -1) {
+		perror("setresgid");
+		exit(1);
+	}
+	if (setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid) == -1) {
+		perror("setresuid");
+		exit(1);
+	}
 	if (pledge("stdio inet unveil", NULL) == -1) {
 		perror("pledge");
 		exit(1);
