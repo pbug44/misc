@@ -32,6 +32,7 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/queue.h>
+#include <sys/select.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -219,12 +220,13 @@ void destroy_payload(void);
 void add_header(char *, char *, int);
 int find_header(int);
 
-int sip_compact = 0;
+int sip_compact = 1;
 char *useragent = "User-Agent: AVM\r\n";
 
 int
 main(int argc, char *argv[])
 {
+	int sel;
 	int savelen, len;
 	int ds, sslen = sizeof(struct sockaddr_in);
 	int ch, debug = 0;
@@ -240,10 +242,12 @@ main(int argc, char *argv[])
 	struct sockaddr_in sin;
 	struct passwd *pw;
 
-	while ((ch = getopt(argc, argv, "cd")) != -1) {
+	fd_set rset;
+
+	while ((ch = getopt(argc, argv, "Cd")) != -1) {
 		switch (ch) {
-		case 'c':
-			sip_compact = 1;
+		case 'C':
+			sip_compact = 0;
 			break;
 		case 'd':
 			debug = 1;
@@ -316,8 +320,21 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* recvfrom loop */
 
 	for (;;) {
+		FD_ZERO(&rset);
+		FD_SET(ds, &rset);
+
+		sel = select(ds + 1, &rset, NULL, NULL, NULL);
+		if (sel < 0) {
+			perror("select");
+			continue;
+		}
+
+		if (!FD_ISSET(ds, &rset))
+			continue;
+
 		len = recvfrom(ds, buf, sizeof(buf), 0, (struct sockaddr *)&sin, &sslen);		
 	
 		if (len < 0) {
@@ -345,28 +362,37 @@ main(int argc, char *argv[])
 	
 		payload = &buf[iphl + udphl];
 
+		if (debug) {
+			printf("--------------------------------------------------------------------\n");
+			inet_ntop(AF_INET, (char *)&ip->ip_src, (char *)&abuf, sizeof(abuf));
+			printf("SOURCE: %s\n", abuf);
+			inet_ntop(AF_INET, (char *)&ip->ip_dst, (char *)&abuf, sizeof(abuf));
+			printf("DEST: %s\n", abuf);
+			printf("HOPS: %d\n", ip->ip_ttl);
 
-		printf("--------------------------------------------------------------------\n");
-		inet_ntop(AF_INET, (char *)&ip->ip_src, (char *)&abuf, sizeof(abuf));
-		printf("SOURCE: %s\n", abuf);
-		inet_ntop(AF_INET, (char *)&ip->ip_dst, (char *)&abuf, sizeof(abuf));
-		printf("DEST: %s\n", abuf);	
-		printf("HOPS: %d\n", ip->ip_ttl);
+			printf("SRCPORT: %d\n", ntohs(udp->uh_sport));
+			printf("DSTPORT: %d\n", ntohs(udp->uh_dport));
+		}
 
-		printf("SRCPORT: %d\n", ntohs(udp->uh_sport));
-		printf("DSTPORT: %d\n", ntohs(udp->uh_dport));
-
+		if (ntohs(udp->uh_dport) != 5060) {
+			if (debug)
+				fprintf(stderr, "not destined for port 5060, pass\n");
+			goto skip;
+		}
 
 		printf("LEN: %d\n", len);
 
 		if (parse_payload(payload, len - (iphl + udphl)) < 0) {
-			fprintf(stderr, "parse_payload failure, skip\n");
+			if (debug)
+				fprintf(stderr, "parse_payload failure, skip\n");
 			goto skip;
 		}
 
 		len = new_payload(payload, sizeof(buf) - iphl - udphl);
 		if (len < 0) {
+			destroy_payload();
 			len = savelen;
+
 			goto skip;
 		}
 
@@ -375,10 +401,11 @@ main(int argc, char *argv[])
 		destroy_payload();
 
 
-		if (len > 1420)
+		if (len > 1420 && debug)
 			fprintf(stderr, "ruh roh, len > 1420\n");
 
-		printf("NEWLEN: %d\n", len);
+		if (debug)
+			printf("NEWLEN: %d\n", len);
 		
 		NTOHS(ip->ip_len);
 		ip->ip_len -= (savelen - len);
@@ -388,7 +415,8 @@ main(int argc, char *argv[])
 		udp->uh_ulen -= (savelen - len);
 		HTONS(udp->uh_ulen);
 
-		printf("--------------------------------------------------------------------\n");
+		if (debug)
+			printf("--------------------------------------------------------------------\n");
 skip:
 		if (sendto(ds, buf, len, 0, (struct sockaddr*)&sin, sslen) < 0) {
 			perror("write");
@@ -398,6 +426,9 @@ skip:
 
 
 
+/*
+ * parse_payload - parse the UDP packet if it is a SIP packet 
+ */
 
 
 int
@@ -496,11 +527,20 @@ parse_payload(char *payload, int len)
 					n1->flags |= SIP_DIV_FLAG_HEADER;
 					n1->type = tokens[i].type;
 
-					if (n1->type == SIP_DIV_USERAGENT) {
+					if (n1->type == SIP_DIV_USERAGENT ||
+						n1->type == SIP_DIV_XAUSERAGENT) {
 						n1->replace = strdup(useragent);
+						if (n1->replace == NULL) {
+							perror("strdup");
+							return (-1);
+						}
 						n1->replacelen = strlen(n1->replace);
 					} else if (n1->type == SIP_DIV_EXPIRES) {
 						n1->replace = strdup("Expires: 300\r\n");
+						if (n1->replace == NULL) {
+							perror("strdup");
+							return (-1);
+						}
 						n1->replacelen = strlen(n1->replace);
 					}
 
@@ -567,7 +607,9 @@ parse_payload(char *payload, int len)
 }
 
 
-
+/*
+ * destroy_payload - destroy and free the linked list for this packet
+ */
 
 void
 destroy_payload(void)
