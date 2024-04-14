@@ -425,6 +425,7 @@ proxima_work(struct sipconn *sc)
 
 	sc->activity = time(NULL);
 
+#if 0
 	if (parse_payload(sc->inbuf, sc->inbuflen) < 0) {
 		fprintf(stderr, "parse_payload failure, skip\n");
 		return;
@@ -437,7 +438,6 @@ proxima_work(struct sipconn *sc)
 
 	destroy_payload();
 
-#if 0
 	if (sendto(sc->so, buf, len, 0, (struct sockaddr*)&sin, sslen) < 0) {
 		perror("write");
 	}
@@ -758,7 +758,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
-	hints.ai_flags = AI_NUMERICSERV | AI_NUMERICHOST | AI_CANONNAME;
+	hints.ai_flags = AI_ADDRCONFIG | AI_CANONNAME;
 
 	error = getaddrinfo(rhost, "5060", &hints, &res0);
 	if (error) {
@@ -771,7 +771,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 		so = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 		if (so == -1) {
 			perror("socket");
-			freeaddrinfo(res);
+			freeaddrinfo(res0);
 			return (NULL);
 		}
 
@@ -796,8 +796,8 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 		/* if we are internal give it special treatment */
 		if (x) {
 			sc->af = res->ai_family;
-
-			memcpy(&cfg->sipbox, res->ai_addr, res->ai_addrlen);
+			memcpy((char *)&cfg->sipbox, (char *)&res->ai_addr, sizeof(struct sockaddr_storage));
+			slen = res->ai_addrlen;
 			if (getsockname(so, (struct sockaddr *)&cfg->internal, &slen) == -1) {
 				perror("getsockname");
 				free(sc);
@@ -819,11 +819,11 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 				break;
 			}
 
-			memcpy(&sc->local, &cfg->internal, sizeof(sc->local));
-			memcpy(&sc->remote, &cfg->sipbox, sizeof(sc->remote));
+			memcpy((char *)&sc->local, (char *)&cfg->internal, sizeof(sc->local));
+			memcpy((char *)&sc->remote, (char *)&cfg->sipbox, sizeof(sc->remote));
 
 			if (bind(sc->so, (struct sockaddr *)&sc->local, \
-				sizeof(struct sockaddr)) == -1) {
+				res->ai_addrlen) == -1) {
 				perror("bind");
 				free(sc);
 				goto out;
@@ -854,20 +854,20 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 				break;
 			}
 
-			sc->state = STATE_INVITE;
 			sc->activity = sc->connect = time(NULL);
-
-			SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
-			close(so);
+			sc->state = STATE_INVITE;
 		}
+
+		SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
+		close(so);
 	}
 
-	freeaddrinfo(res);
+	freeaddrinfo(res0);
 	return (sc);
 
 out:
 	close(so);
-	freeaddrinfo(res);
+	freeaddrinfo(res0);
 	return (NULL);
 
 }
