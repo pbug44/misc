@@ -144,7 +144,6 @@ struct sipconn * add_socket(struct cfg *, uint16_t, char *, uint16_t, int);
 
 int sip_compact = 0;
 char *useragent = "User-Agent: AVM\r\n";
-int a_family = AF_INET;
 
 int
 main(int argc, char *argv[])
@@ -221,7 +220,7 @@ main(int argc, char *argv[])
 	SLIST_INIT(&cfg.connection);
 
 	/* set up default listening socket */
-	if (add_socket(&cfg, LISTENPORT, "8.8.8.8", 5060, 1) == NULL) {
+	if (add_socket(&cfg, LISTENPORT, "delphinusdns.org", 5060, 1) == NULL) {
 		exit(1);
 	}
 
@@ -748,7 +747,7 @@ add_header(char *header, char *contents, int type)
 struct sipconn *
 add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 {
-	struct addrinfo *res, hints;
+	struct addrinfo *res0, *res, hints;
 	struct sipconn *sc;
 	struct sockaddr_in *psin;
 	struct sockaddr_in6 *psin6;
@@ -756,111 +755,113 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	socklen_t slen = sizeof(struct sockaddr_storage);
 
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = a_family;
+	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
 	hints.ai_flags = AI_NUMERICSERV | AI_NUMERICHOST | AI_CANONNAME;
 
-	error = getaddrinfo(rhost, "5060", &hints, &res);
+	error = getaddrinfo(rhost, "5060", &hints, &res0);
 	if (error) {
 		fprintf(stderr, "getaddrinfo: %s\n", 
 			gai_strerror(error));
 		return (NULL);
 	}
 
-	so = socket(res->ai_family, res->ai_protocol, res->ai_socktype);
-	if (so == -1) {
-		perror("socket");
-		freeaddrinfo(res);
-		return (NULL);
-	}
+	for (res = res0; res != NULL; res = res->ai_next) {
+		so = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+		if (so == -1) {
+			perror("socket");
+			freeaddrinfo(res);
+			return (NULL);
+		}
 
-	if (connect(so, res->ai_addr, res->ai_addrlen) == -1) {
-		perror("connect");
-		goto out;
-	}
-	
-	sc = calloc(1, sizeof(struct sipconn));
-	if (sc == NULL) {
-		syslog(LOG_INFO, "calloc: %m");
-		goto out;
-	}
-
-	memcpy(&sc->local, res->ai_addr, res->ai_addrlen);
-	if ((sc->so = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-		perror("socket (2)");
-		free(sc);
-		goto out;
-	}
-	
-	/* if we are internal give it special treatment */
-	if (x) {
-		sc->af = res->ai_family;
-
-		memcpy(&cfg->sipbox, res->ai_addr, res->ai_addrlen);
-		if (getsockname(so, (struct sockaddr *)&cfg->internal, &slen) == -1) {
-			perror("getsockname");
-			free(sc);
+		if (connect(so, res->ai_addr, res->ai_addrlen) == -1) {
+			perror("connect");
 			goto out;
 		}
-	
-		switch (sc->af) {
-		case AF_INET:
-			psin = (struct sockaddr_in *)&cfg->sipbox;
-			psin->sin_port = htons(rport);
-			psin = (struct sockaddr_in *)&cfg->internal;
-			psin->sin_port = htons(lport);	
-			break;
-		default:
-			psin6 = (struct sockaddr_in6 *)&cfg->sipbox;
-			psin6->sin6_port = htons(rport);
-			psin6 = (struct sockaddr_in6 *)&cfg->internal;
-			psin6->sin6_port = htons(lport);	
-			break;
-		}
-
-		memcpy(&sc->local, &cfg->internal, sizeof(sc->local));
-		memcpy(&sc->remote, &cfg->sipbox, sizeof(sc->remote));
-
-		if (bind(sc->so, (struct sockaddr *)&sc->local, \
-			sizeof(struct sockaddr)) == -1) {
-			perror("bind");
-			free(sc);
+		
+		sc = calloc(1, sizeof(struct sipconn));
+		if (sc == NULL) {
+			syslog(LOG_INFO, "calloc: %m");
 			goto out;
 		}
 
-		sc->state = STATE_LISTEN;
-
-	} else {
-		memcpy(&sc->remote, res->ai_addr, res->ai_addrlen);
-		if (getsockname(so, (struct sockaddr *)&sc->local, &slen) == -1) {
-			perror("getsockname");
+		memcpy(&sc->local, res->ai_addr, res->ai_addrlen);
+		if ((sc->so = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+			perror("socket (2)");
 			free(sc);
 			goto out;
 		}
+		
+		/* if we are internal give it special treatment */
+		if (x) {
+			sc->af = res->ai_family;
 
-		switch (res->ai_family) {
-		case AF_INET:
-			psin = (struct sockaddr_in *)&sc->remote;
-			psin->sin_port = htons(rport);
-			psin = (struct sockaddr_in *)&sc->local;
-			psin->sin_port = htons(lport);	
-			break;
-		default:
-			psin6 = (struct sockaddr_in6 *)&sc->remote;
-			psin6->sin6_port = htons(rport);
-			psin6 = (struct sockaddr_in6 *)&sc->local;
-			psin6->sin6_port = htons(lport);	
-			break;
+			memcpy(&cfg->sipbox, res->ai_addr, res->ai_addrlen);
+			if (getsockname(so, (struct sockaddr *)&cfg->internal, &slen) == -1) {
+				perror("getsockname");
+				free(sc);
+				goto out;
+			}
+		
+			switch (sc->af) {
+			case AF_INET:
+				psin = (struct sockaddr_in *)&cfg->sipbox;
+				psin->sin_port = htons(rport);
+				psin = (struct sockaddr_in *)&cfg->internal;
+				psin->sin_port = htons(lport);	
+				break;
+			default:
+				psin6 = (struct sockaddr_in6 *)&cfg->sipbox;
+				psin6->sin6_port = htons(rport);
+				psin6 = (struct sockaddr_in6 *)&cfg->internal;
+				psin6->sin6_port = htons(lport);	
+				break;
+			}
+
+			memcpy(&sc->local, &cfg->internal, sizeof(sc->local));
+			memcpy(&sc->remote, &cfg->sipbox, sizeof(sc->remote));
+
+			if (bind(sc->so, (struct sockaddr *)&sc->local, \
+				sizeof(struct sockaddr)) == -1) {
+				perror("bind");
+				free(sc);
+				goto out;
+			}
+
+			sc->state = STATE_LISTEN;
+
+		} else {
+			memcpy(&sc->remote, res->ai_addr, res->ai_addrlen);
+			if (getsockname(so, (struct sockaddr *)&sc->local, &slen) == -1) {
+				perror("getsockname");
+				free(sc);
+				goto out;
+			}
+
+			switch (res->ai_family) {
+			case AF_INET:
+				psin = (struct sockaddr_in *)&sc->remote;
+				psin->sin_port = htons(rport);
+				psin = (struct sockaddr_in *)&sc->local;
+				psin->sin_port = htons(lport);	
+				break;
+			default:
+				psin6 = (struct sockaddr_in6 *)&sc->remote;
+				psin6->sin6_port = htons(rport);
+				psin6 = (struct sockaddr_in6 *)&sc->local;
+				psin6->sin6_port = htons(lport);	
+				break;
+			}
+
+			sc->state = STATE_INVITE;
+			sc->activity = sc->connect = time(NULL);
+
+			SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
+			close(so);
 		}
-
-		sc->state = STATE_INVITE;
-		sc->activity = sc->connect = time(NULL);
 	}
 
-	SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
-
-	close(so);
 	freeaddrinfo(res);
 	return (sc);
 
