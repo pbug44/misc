@@ -144,6 +144,7 @@ struct sipconn * add_socket(struct cfg *, uint16_t, char *, uint16_t, int);
 
 int sip_compact = 0;
 char *useragent = "User-Agent: AVM\r\n";
+int a_family = AF_INET;
 
 int
 main(int argc, char *argv[])
@@ -755,7 +756,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	socklen_t slen = sizeof(struct sockaddr_storage);
 
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = a_family;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
 	hints.ai_flags = AI_NUMERICSERV | AI_NUMERICHOST | AI_CANONNAME;
