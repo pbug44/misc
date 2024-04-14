@@ -33,20 +33,9 @@
 #include <sys/stat.h>
 #include <sys/queue.h>
 
-#include <net/if.h>
-#include <net/if_dl.h>
-#include <net/if_types.h>
-#include <net/bpf.h>
-#include <net/ethertypes.h>
-
 #include <netinet/in.h>
-#define _KERNEL 1
-#include <netinet/ip.h>
-#undef _KERNEL
-#include <netinet/udp.h>
-#include <netinet/if_ether.h>
-
 #include <arpa/inet.h>
+#include <netdb.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -61,17 +50,26 @@
 
 #include <ctype.h>
 
-#define SIP_DIV_USER		"_sipdiv"
+#include "sip.h"
+
+#define PROXIMASIP_USER		"_proximasip"
+#define DEFAULT_AVMBOX		"192.168.174.4"
+#define MAX_BUFSZ		65535
+#define LISTENPORT		12345
+#define TIMEOUT			10
+
+#define STATE_INVALID		0
+#define STATE_LISTEN		1
+#define STATE_INVITE		2
 
 SLIST_HEAD(, sipdata) head;
 
 struct sipdata {
 	uint8_t flags;
-#define SIP_DIV_FLAG_HEADER	0x1
-#define SIP_DIV_FLAG_BODY	0x2
-#define SIP_DIV_FLAG_SHORTFORM	0x4
-#define SIP_DIV_FLAG_COMPACT	0x8
-
+#define SIP_HEAD_FLAG_HEADER	0x1
+#define SIP_HEAD_FLAG_BODY	0x2
+#define SIP_HEAD_FLAG_SHORTFORM	0x4
+#define SIP_HEAD_FLAG_COMPACT	0x8
 
 	char 	*fields;
 	int 	fieldlen;
@@ -81,65 +79,8 @@ struct sipdata {
 	int	replacelen;
 	int	replacetype;
 
-#define SIP_DIV_REPLACE_TYPE_STRING	0
-#define SIP_DIV_REPLACE_TYPE_INT	1
-
-#define SIP_DIV_STATUS		0		/* status line */
-#define SIP_DIV_FROM		1		/* From: */
-#define SIP_DIV_TO		2		/* To: */
-#define SIP_DIV_VIA		3		/* Via: */
-#define SIP_DIV_CALLERID	4		/* Caller-ID: */
-#define SIP_DIV_USERAGENT	5		/* User-Agent: */
-#define SIP_DIV_CONTENTTYPE	6		/* Content-Type: */
-#define SIP_DIV_ACCEPTCONTACT	7		/* Accept-Contact: */
-#define SIP_DIV_MAXFORWARDS	8		/* Max-Forwards: */
-#define SIP_DIV_CONTACT		9		/* Contact: */
-#define SIP_DIV_CSEQ		10		/* CSeq: */
-#define SIP_DIV_SUPPORTED	11		/* Supported: */
-#define SIP_DIV_ALLOW		12		/* Allow: */
-#define SIP_DIV_ALLOWEVENTS	13		/* Allow-Events: */
-#define SIP_DIV_EVENT		14
-#define	SIP_DIV_REFERTO		15
-#define SIP_DIV_REFERREDBY	16
-#define SIP_DIV_REJECTCONTACT	17
-#define	SIP_DIV_SUBJECT		18
-#define	SIP_DIV_ALERTINFO	19
-#define	SIP_DIV_CALLINFO	20
-#define	SIP_DIV_DATE		21
-#define	SIP_DIV_ERRORINFO	22
-#define	SIP_DIV_MAXBREADTH	23
-#define	SIP_DIV_ORGANIZATION	24
-#define	SIP_DIV_PRIORITY	25
-#define	SIP_DIV_PROXYAUTHEN	26
-#define	SIP_DIV_PROXYAUTHOR	27
-#define	SIP_DIV_PROXYREQ	28
-#define	SIP_DIV_RECORDROUTE	29
-#define SIP_DIV_EXPIRES		30
-#define	SIP_DIV_REQUIRE		31
-#define	SIP_DIV_ROUTE		32
-#define	SIP_DIV_WWWAUTH		33
-#define	SIP_DIV_SECURECLIENT	34
-#define	SIP_DIV_SECUREVERIFY	35
-#define	SIP_DIV_SECURESERVER	36
-#define	SIP_DIV_ANSWERMODE	37
-#define	SIP_DIV_PRIVANSWERMODE	38
-#define	SIP_DIV_HISTORYINFO	39
-#define	SIP_DIV_PATH		40
-#define	SIP_DIV_IDENTITY	41
-#define	SIP_DIV_IDENTITYINFO	42
-#define	SIP_DIV_PASSERTEDID	43
-#define	SIP_DIV_REASON		44
-#define	SIP_DIV_RESOURCEPRIO	45
-#define	SIP_DIV_AUTHINFO	46
-#define SIP_DIV_XAUSERAGENT	47
-#define SIP_DIV_XACONTACT	48
-#define SIP_DIV_CONTENTENC	49
-#define SIP_DIV_CONTENTLEN	50
-#define SIP_DIV_ACCEPT		51
-#define SIP_DIV_ACCEPTENC	52
-#define SIP_DIV_ACCEPTLANG	53
-#define SIP_DIV_AUTHORIZATION	54
-#define SIP_DIV_MAX		55
+#define SIP_HEAD_REPLACE_TYPE_STRING	0
+#define SIP_HEAD_REPLACE_TYPE_INT	1
 
 	char 	*body;
 	int	bodylen;
@@ -149,75 +90,57 @@ struct sipdata {
 } *n1, *n2, *np;
 
 
-struct tok {
-	int type;
-	char *token;
-	char *shortform;
-} tokens[] = {
-	{ SIP_DIV_STATUS, "YCVFDSAFEWQFQF", NULL },
-	{ SIP_DIV_VIA, "Via:" , "v:" },
-	{ SIP_DIV_ROUTE , "Route:", NULL },
-	{ SIP_DIV_FROM, "From:" , "f:" },
-	{ SIP_DIV_TO, "To:", "t:" },
-	{ SIP_DIV_CALLERID, "Call-ID:", "i:" },
-	{ SIP_DIV_CSEQ, "CSeq:", NULL },
-	{ SIP_DIV_CONTACT, "Contact:", "m:" },
-	{ SIP_DIV_AUTHORIZATION, "Authorization:", NULL },
-	{ SIP_DIV_MAXFORWARDS, "Max-Forwards:", NULL },
-	{ SIP_DIV_EXPIRES , "Expires:" , NULL},
-	{ SIP_DIV_USERAGENT, "User-Agent:", NULL },
-	{ SIP_DIV_SUPPORTED, "Supported:", NULL },
-	{ SIP_DIV_ALLOWEVENTS, "Allow-Events:" , "u:" },
-	{ SIP_DIV_ALLOW, "Allow:", NULL },
-	{ SIP_DIV_ACCEPT , "Accept:", NULL },
-	{ SIP_DIV_ACCEPTENC , "Accept-Encoding:", NULL },
-	{ SIP_DIV_ACCEPTCONTACT, "Accept-Contact:", "a:" },
-	{ SIP_DIV_EVENT, "Event:" , "o:" },
-	{ SIP_DIV_REFERTO, "Refer-To:" , "r:" },
-	{ SIP_DIV_REFERREDBY, "Referred-By:", "b:" },
-	{ SIP_DIV_REJECTCONTACT, "Reject-Contact:", "j:" },
-	{ SIP_DIV_SUBJECT, "Subject:", "s:" },
-	{ SIP_DIV_ALERTINFO , "Alert-Info:", NULL },
-	{ SIP_DIV_CALLINFO , "Call-Info:", NULL },
-	{ SIP_DIV_DATE , "Date:", NULL },
-	{ SIP_DIV_ERRORINFO , "Error-Info:", NULL },
-	{ SIP_DIV_MAXBREADTH , "Max-Breadth:", NULL },
-	{ SIP_DIV_ORGANIZATION , "Organization:", NULL },
-	{ SIP_DIV_PRIORITY , "Priority:", NULL },
-	{ SIP_DIV_PROXYAUTHEN , "Proxy-Authenticate:", NULL },
-	{ SIP_DIV_PROXYAUTHOR , "Proxy-Authorization:", NULL },
-	{ SIP_DIV_PROXYREQ , "Proxy-Require:", NULL },
-	{ SIP_DIV_RECORDROUTE , "Record-Route:", NULL },
-	{ SIP_DIV_REASON , "Reason:", NULL },
-	{ SIP_DIV_REQUIRE , "Require:", NULL },
-	{ SIP_DIV_WWWAUTH , "WWW-Authenticate:", NULL },
-	{ SIP_DIV_SECURECLIENT , "Security-Client:", NULL },
-	{ SIP_DIV_SECUREVERIFY , "Security-Verify:" , NULL },
-	{ SIP_DIV_SECURESERVER , "Secure-Server:" , NULL },
-	{ SIP_DIV_ANSWERMODE , "Answer-Mode:" , NULL },
-	{ SIP_DIV_PRIVANSWERMODE , "Priv-Answer-Mode:" , NULL },
-	{ SIP_DIV_HISTORYINFO , "History-Info:" , NULL },
-	{ SIP_DIV_PATH , "Path:" , NULL },
-	{ SIP_DIV_IDENTITY , "Identity:" , NULL },
-	{ SIP_DIV_IDENTITYINFO , "Identity-Info:" , NULL },
-	{ SIP_DIV_PASSERTEDID , "P-Asserted-Identity:" , NULL },
-	{ SIP_DIV_RESOURCEPRIO , "Resource-Priority:" , NULL },
-	{ SIP_DIV_AUTHINFO , "Auth-Info:" , NULL },
-	{ SIP_DIV_XAUSERAGENT , "X-A-User-Agent:" , NULL },
-	{ SIP_DIV_XACONTACT , "X-A-Contact:" , NULL },
-	{ SIP_DIV_ACCEPTLANG , "Accept-Language:" , NULL },
-	{ SIP_DIV_CONTENTENC , "Content-Encoding:", "e:" },
-	{ SIP_DIV_CONTENTTYPE, "Content-Type:" , "c:" },
-	{ SIP_DIV_CONTENTLEN , "Content-Length:", "l:" },
-	{ SIP_DIV_MAX, NULL, NULL }
+struct sipconn {
+	int af;				/* address family */
+	int addrlen;			/* address length */
+
+	int so;				/* socket */
+	int state;			/* state of connection */
+	int auth;			/* authentication flag */
+
+	time_t connect;			/* first connection time */
+	time_t activity;		/* last activity */
+
+	char *hostname;			/* hostname facing the world */
+	char *address;			/* remote address */
+
+	struct sockaddr_storage local;	/* local IP */
+	struct sockaddr_storage remote; /* remote IP */
+
+	char *inbuf;
+	int inbuflen;	
+	char *outbuf;
+	int outbuflen;
+	
+	SLIST_ENTRY(sipconn) entries;
 };
 
+struct cfg {
+	char *myname;
+	char *mydomain;
+
+	char *u;		/* username */
+	char *p;		/* password */
+
+	char *a;		/* internal hostname usually DEFAULT_AVMBOX */
+
+	struct sockaddr_storage sipbox;			/* AVM box in my case */
+	struct sockaddr_storage internal;		/* internal IP */
+	
+	SLIST_HEAD(, sipconn) connection;
+};
 
 int parse_payload(char *, int);
 int new_payload(char *, int);
 void destroy_payload(void);
 void add_header(char *, char *, int);
 int find_header(int);
+int listen_proxima(struct cfg *, fd_set *);
+void timeout_proxima(struct cfg *);
+void proxima_work(struct sipconn *);
+void delete_sc(struct cfg *, struct sipconn *);
+struct sipconn * proxima(struct cfg *cfg, fd_set *rset);
+struct sipconn * add_socket(struct cfg *, uint16_t, char *, uint16_t, int);
 
 int sip_compact = 0;
 char *useragent = "User-Agent: AVM\r\n";
@@ -225,61 +148,97 @@ char *useragent = "User-Agent: AVM\r\n";
 int
 main(int argc, char *argv[])
 {
-	int savelen, len;
-	int ds, sslen = sizeof(struct sockaddr_in);
-	int ch, debug = 0;
-	int iphl = sizeof(struct ip);
-	int udphl = sizeof(struct udphdr);
+	fd_set rset;
 
-	char buf[65535];
-	char abuf[INET6_ADDRSTRLEN];
-	char *payload;
+	int debug = 0;
+	int ch;
+	int sel;
 
-	struct ip *ip;
-	struct udphdr *udp;
-	struct sockaddr_in sin;
+	char myname[256];
+
+	struct cfg cfg;
 	struct passwd *pw;
+	struct sipconn *sc = NULL;
 
-	while ((ch = getopt(argc, argv, "cd")) != -1) {
+	memset((char *)&cfg, 0, sizeof(cfg));
+	
+	cfg.a = DEFAULT_AVMBOX;
+
+	while ((ch = getopt(argc, argv, "a:du:p:")) != -1) {
 		switch (ch) {
-		case 'c':
-			sip_compact = 1;
+		case 'a':
+			cfg.a = strdup(optarg);
+			if (cfg.p == NULL) {
+				fprintf(stderr, "strdup: %s\n", strerror(errno));
+				exit(1);
+			}
+
 			break;
+
 		case 'd':
 			debug = 1;
 			break;
+
+		case 'p':
+			if (strncmp(optarg, "$2b$", 4) != 0) {
+				fprintf(stderr, "no valid password set\n");
+				exit(1);
+			}
+			cfg.p = strdup(optarg);
+			if (cfg.p == NULL) {
+				fprintf(stderr, "strdup: %s\n", strerror(errno));
+				exit(1);
+			}
+			break;
+
+		case 'u':
+			cfg.u = strdup(optarg);
+			if (cfg.p == NULL) {
+				fprintf(stderr, "strdup: %s\n", strerror(errno));
+				exit(1);
+			}
+			break;
+
+		
 		default:
-			fprintf(stderr, "usage: sipdiv [-c][-d]\n");
+			fprintf(stderr, "usage: proximasip [-d]\n");
 			exit (1);
 		}
 	}
 
+	/* get hosts fqdn name */
+	if (gethostname(myname, sizeof(myname)) == -1) {
+		syslog(LOG_ERR, "no hostname found, setting to localhost");
+		snprintf(myname, sizeof(myname), "localhost");
+	}
+
+	cfg.myname = strdup(myname);
+	if (cfg.myname == NULL) {
+		exit(2);
+	}
+
+	SLIST_INIT(&cfg.connection);
+
+	/* set up default listening socket */
+	if (add_socket(&cfg, LISTENPORT, "8.8.8.8", 5060, 1) == NULL) {
+		exit(1);
+	}
+
+	/* set up default internal listening socket */
+	if (add_socket(&cfg, 5060, cfg.a, 5060, 1) == NULL) {
+		exit(1);
+	}
+
 	SLIST_INIT(&head);
 		
-	openlog("sipdiv", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
-	syslog(LOG_INFO, "sipdiv starting up");
-	
-	ds = socket(AF_INET, SOCK_RAW, IPPROTO_DIVERT);
-	if (ds < 0) {
-		perror("socket");
-		exit(1);
-	}
-
-	memset(&sin, 0, sizeof(sin));	
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(22222);
-
-	if (bind(ds, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
-		perror("bind");
-		exit(1);
-	}
+	syslog(LOG_INFO, "proximasip starting up");
 
 	if (! debug)
 		daemon(0,0);
 
-
-	pw = getpwnam(SIP_DIV_USER);
+	pw = getpwnam(PROXIMASIP_USER);
 	if (pw == NULL) {
 		perror("getpwnam");
 		exit(1);
@@ -293,6 +252,12 @@ main(int argc, char *argv[])
 		perror("chdir");
 		exit(1);
 	}
+
+	if (setgroups(1, &pw->pw_gid) == -1) {
+		perror("setgroups");
+		exit(1);
+	}
+
 	if (setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) == -1) {
 		perror("setresgid");
 		exit(1);
@@ -317,88 +282,172 @@ main(int argc, char *argv[])
 	}
 
 
+	/* mainloop */
 	for (;;) {
-		len = recvfrom(ds, buf, sizeof(buf), 0, (struct sockaddr *)&sin, &sslen);		
-	
-		if (len < 0) {
-			perror("read");
-			continue;
-		}	
+		timeout_proxima(&cfg);
 
-		if (len < sizeof(struct ip))
+		sel = listen_proxima(&cfg, &rset);
+		if (sel < 1)
 			continue;
 
-		ip = (struct ip *)&buf[0];
-		
-		if (ip->ip_p != IPPROTO_UDP)
-			goto skip;
-
-		iphl = (ip->ip_hl * 4);
-
-		
-		if (len < (iphl + udphl))
-			continue;
-
-		savelen = len;
-
-		udp = (struct udphdr *)&buf[iphl];
-	
-		payload = &buf[iphl + udphl];
-
-
-		printf("--------------------------------------------------------------------\n");
-		inet_ntop(AF_INET, (char *)&ip->ip_src, (char *)&abuf, sizeof(abuf));
-		printf("SOURCE: %s\n", abuf);
-		inet_ntop(AF_INET, (char *)&ip->ip_dst, (char *)&abuf, sizeof(abuf));
-		printf("DEST: %s\n", abuf);	
-		printf("HOPS: %d\n", ip->ip_ttl);
-
-		printf("SRCPORT: %d\n", ntohs(udp->uh_sport));
-		printf("DSTPORT: %d\n", ntohs(udp->uh_dport));
-
-
-		printf("LEN: %d\n", len);
-
-		if (parse_payload(payload, len - (iphl + udphl)) < 0) {
-			fprintf(stderr, "parse_payload failure, skip\n");
-			goto skip;
+		while ((sc = proxima(&cfg, &rset)) != NULL) {
+			proxima_work(sc);
 		}
+	}
 
-		len = new_payload(payload, sizeof(buf) - iphl - udphl);
-		if (len < 0) {
-			len = savelen;
-			goto skip;
-		}
-
-		len += (udphl + iphl);
-		
-		destroy_payload();
-
-
-		if (len > 1420)
-			fprintf(stderr, "ruh roh, len > 1420\n");
-
-		printf("NEWLEN: %d\n", len);
-		
-		NTOHS(ip->ip_len);
-		ip->ip_len -= (savelen - len);
-		HTONS(ip->ip_len);
-
-		NTOHS(udp->uh_ulen);
-		udp->uh_ulen -= (savelen - len);
-		HTONS(udp->uh_ulen);
-
-		printf("--------------------------------------------------------------------\n");
-skip:
-		if (sendto(ds, buf, len, 0, (struct sockaddr*)&sin, sslen) < 0) {
-			perror("write");
-		}
-	} /* for(;;) */
+	/* NOTREACHED */
 }
 
 
+int
+listen_proxima(struct cfg *cfg, fd_set *rset)
+{
+	int max = 0;
+	struct timeval tv = {10, 0};
+	struct sipconn *sc;
+
+	FD_ZERO(rset);
+
+	SLIST_FOREACH(sc, &cfg->connection, entries) {
+		if (sc->state != STATE_LISTEN)
+			continue;
+
+		if (sc->so > max) 
+			max = sc->so;
+
+		FD_SET(sc->so, rset);
+	}
+
+	return (select(max + 1, rset, NULL, NULL, &tv));
+}
+
+struct sipconn *
+proxima(struct cfg *cfg, fd_set *rset)
+{
+	struct sipconn *sc, *sc0, *sc1, *sc2, *rsc;
+	struct sockaddr_storage st;
+	struct sockaddr_in *psin;
+	struct sockaddr_in6 *psin6;
+	socklen_t stlen = sizeof(struct sockaddr_storage);
+	static char *buf = NULL;
+	char address[INET6_ADDRSTRLEN];
+	int len;
+
+	if (buf == NULL) {
+		buf = calloc(1, MAX_BUFSZ);
+		if (buf == NULL)
+			return NULL;
+	}
+
+	SLIST_FOREACH_SAFE(sc, &cfg->connection, entries, sc0) {
+		if (sc->state != STATE_LISTEN)
+			continue;
+
+		if (FD_ISSET(sc->so, rset)) {
+			len = recvfrom(sc->so, buf, MAX_BUFSZ, 0, (struct sockaddr *)&st, &stlen);		
+			if (len < 0) {
+				perror("read");
+				return NULL;
+			}
+
+			SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc2){
+				if (sc1->state == STATE_LISTEN)
+					continue;
+				
+				if (sc1->af != ((struct sockaddr *)&st)->sa_family)
+					continue;
+
+				switch (sc->af) {
+				case AF_INET6:
+					psin6 = (struct sockaddr_in6 *)&sc1->remote;
+					if (memcmp(psin6, (struct sockaddr_in6 *)&st, \
+							sizeof(struct sockaddr_in6)) == 0)  {
+						return (sc1);	
+					}	
+
+					break;
+				default:
+
+					psin = (struct sockaddr_in *)&sc1->remote;
+					if (memcmp(psin, (struct sockaddr_in *)&st, \
+							sizeof(struct sockaddr_in)) == 0) {
+						return (sc1);	
+					}	
+				}
+			}
+				
+			switch (st.ss_family) {
+			case AF_INET6:
+				psin6 = (struct sockaddr_in6 *)&st;
+				inet_ntop(AF_INET6, (char *)psin6, (char *)&address, \
+					 sizeof(address));
+				rsc = add_socket(cfg, LISTENPORT,address,ntohs(psin6->sin6_port), 0);
+				if (rsc) {
+					rsc->address = strdup(address);
+					rsc->inbuf = buf;
+					rsc->inbuflen = len;
+				}
+
+				return (rsc);
+				break;
+			default:
+				psin = (struct sockaddr_in *)&st;
+				inet_ntop(AF_INET, (char *)psin, (char *)&address, \
+					 sizeof(address));
+
+				rsc = add_socket(cfg, LISTENPORT, address, ntohs(psin->sin_port), 0);
+				if (rsc) {
+					rsc->address = strdup(address);
+					rsc->inbuf = buf;
+					rsc->inbuflen = len;
+				}
+
+				return (rsc);
+				break;
+			}
+		}
+	}
+
+	return NULL;
+}
 
 
+/*
+ * PROXIMA_WORK - parse what we got and move packets around
+ *
+ */
+
+
+void
+proxima_work(struct sipconn *sc)
+{
+	int len;
+
+	sc->activity = time(NULL);
+
+	if (parse_payload(sc->inbuf, sc->inbuflen) < 0) {
+		fprintf(stderr, "parse_payload failure, skip\n");
+		return;
+	}
+
+	len = new_payload(sc->inbuf, sc->inbuflen);
+	if (len < 0) {
+		return;
+	}
+
+	destroy_payload();
+
+#if 0
+	if (sendto(sc->so, buf, len, 0, (struct sockaddr*)&sin, sslen) < 0) {
+		perror("write");
+	}
+#endif
+}
+
+
+/*
+ * PARSE_PAYLOAD - from sipdiv.c 
+ */
 
 int
 parse_payload(char *payload, int len)
@@ -427,7 +476,7 @@ parse_payload(char *payload, int len)
 				memcpy(n1->fields, payload, len);
 				n1->fields[len] = '\0';
 				n1->fieldlen = len;
-				n1->flags |= SIP_DIV_FLAG_BODY;
+				n1->flags |= SIP_HEAD_FLAG_BODY;
 				n1->type = 0;
 				SLIST_INSERT_HEAD(&head, n1, entries);
 
@@ -457,7 +506,7 @@ parse_payload(char *payload, int len)
 			memcpy(n1->fields, payload, len);
 			n1->fields[len] = '\0';
 			n1->fieldlen = len;
-			n1->flags |= SIP_DIV_FLAG_BODY;
+			n1->flags |= SIP_HEAD_FLAG_BODY;
 			n1->type = 0;
 			SLIST_INSERT_HEAD(&head, n1, entries);
 
@@ -475,15 +524,15 @@ parse_payload(char *payload, int len)
 
 			memcpy(n1->fields, payload, newlen);
 			n1->fieldlen = newlen;
-			n1->flags |= SIP_DIV_FLAG_HEADER;
-			n1->type = SIP_DIV_STATUS;
+			n1->flags |= SIP_HEAD_FLAG_HEADER;
+			n1->type = SIP_HEAD_STATUS;
 			SLIST_INSERT_HEAD(&head, n1, entries);
 			header++;
 
 		} else {
 			for (i=0; tokens[i].token != NULL; i++) {
 				if (memcmp(payload, tokens[i].token, strlen(tokens[i].token)) == 0) {
-					if (tokens[i].type == SIP_DIV_CONTENTLEN)
+					if (tokens[i].type == SIP_HEAD_CONTENTLEN)
 						seencl = 1;
 
 					n1->fields = malloc(newlen);
@@ -493,13 +542,13 @@ parse_payload(char *payload, int len)
 					}
 					memcpy(n1->fields, payload, newlen);
 					n1->fieldlen = newlen;
-					n1->flags |= SIP_DIV_FLAG_HEADER;
+					n1->flags |= SIP_HEAD_FLAG_HEADER;
 					n1->type = tokens[i].type;
 
-					if (n1->type == SIP_DIV_USERAGENT) {
+					if (n1->type == SIP_HEAD_USERAGENT) {
 						n1->replace = strdup(useragent);
 						n1->replacelen = strlen(n1->replace);
-					} else if (n1->type == SIP_DIV_EXPIRES) {
+					} else if (n1->type == SIP_HEAD_EXPIRES) {
 						n1->replace = strdup("Expires: 300\r\n");
 						n1->replacelen = strlen(n1->replace);
 					}
@@ -520,7 +569,7 @@ parse_payload(char *payload, int len)
 							n1->fields + strlen(tokens[i].token), 
 							tokenlen - strlen(tokens[i].shortform));
 
-						n1->flags |= SIP_DIV_FLAG_COMPACT;
+						n1->flags |= SIP_HEAD_FLAG_COMPACT;
 					} 
 						
 					
@@ -536,7 +585,7 @@ parse_payload(char *payload, int len)
 					}
 					memcpy(n1->fields, payload, newlen);
 					n1->fieldlen = newlen;
-					n1->flags |= (SIP_DIV_FLAG_HEADER | SIP_DIV_FLAG_SHORTFORM);
+					n1->flags |= (SIP_HEAD_FLAG_HEADER | SIP_HEAD_FLAG_SHORTFORM);
 					n1->type = tokens[i].type;
 					
 					SLIST_INSERT_HEAD(&head, n1, entries);
@@ -557,9 +606,9 @@ parse_payload(char *payload, int len)
 	} while (len >= 0);
 
 	if (sip_compact) {
-		if (! find_header(SIP_DIV_CONTENTTYPE)) {
+		if (! find_header(SIP_HEAD_CONTENTTYPE)) {
 			add_header("Content-Type:", 
-				" application/sdp\r\n", SIP_DIV_CONTENTTYPE);
+				" application/sdp\r\n", SIP_HEAD_CONTENTTYPE);
 		}
 	}
 
@@ -603,19 +652,19 @@ new_payload(char *buf, int len)
 
 	/* reconstruct header */
 	
-	for (int i = 0; tokens[i].type != SIP_DIV_MAX; i++) {
+	for (int i = 0; tokens[i].type != SIP_HEAD_MAX; i++) {
 		SLIST_FOREACH(np, &head, entries) {
-			if (np->flags & SIP_DIV_FLAG_BODY)
+			if (np->flags & SIP_HEAD_FLAG_BODY)
 				continue;
 
 			/* strip out known X- Headers, why do we need them? */
-			if (sip_compact && ((np->type == SIP_DIV_XAUSERAGENT) ||
-				(np->type == SIP_DIV_XACONTACT)))
+			if (sip_compact && ((np->type == SIP_HEAD_XAUSERAGENT) ||
+				(np->type == SIP_HEAD_XACONTACT)))
 				continue;
 
 
 			if (tokens[i].type == np->type) {
-				if (np->flags & SIP_DIV_FLAG_COMPACT) {
+				if (np->flags & SIP_HEAD_FLAG_COMPACT) {
 					memcpy(&tmpbuf, np->replace, np->replacelen);
 					tmpbuf[np->replacelen] = '\0';
 					if (tmpbuf[np->replacelen - 2] == '\r')
@@ -651,7 +700,7 @@ new_payload(char *buf, int len)
 
 
 	SLIST_FOREACH(np, &head, entries) {
-		if (!(np->flags & SIP_DIV_FLAG_BODY))
+		if (!(np->flags & SIP_HEAD_FLAG_BODY))
 			continue;
 
 		memcpy(&tmpbuf, np->fields, np->fieldlen);
@@ -693,4 +742,161 @@ add_header(char *header, char *contents, int type)
 		contents, strlen(contents));
 
 	SLIST_INSERT_HEAD(&head, n1, entries);
+}
+
+struct sipconn *
+add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
+{
+	struct addrinfo *res, hints;
+	struct sipconn *sc;
+	struct sockaddr_in *psin;
+	struct sockaddr_in6 *psin6;
+	int so, error;
+	socklen_t slen = sizeof(struct sockaddr_storage);
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	hints.ai_protocol = IPPROTO_UDP;
+	hints.ai_flags = AI_NUMERICSERV | AI_NUMERICHOST | AI_CANONNAME;
+
+	error = getaddrinfo(rhost, "5060", &hints, &res);
+	if (error) {
+		fprintf(stderr, "getaddrinfo: %s\n", 
+			gai_strerror(error));
+		return (NULL);
+	}
+
+	so = socket(res->ai_family, res->ai_protocol, res->ai_socktype);
+	if (so == -1) {
+		perror("socket");
+		freeaddrinfo(res);
+		return (NULL);
+	}
+
+	if (connect(so, res->ai_addr, res->ai_addrlen) == -1) {
+		perror("connect");
+		goto out;
+	}
+	
+	sc = calloc(1, sizeof(struct sipconn));
+	if (sc == NULL) {
+		syslog(LOG_INFO, "calloc: %m");
+		goto out;
+	}
+
+	memcpy(&sc->local, res->ai_addr, res->ai_addrlen);
+	if ((sc->so = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+		perror("socket (2)");
+		free(sc);
+		goto out;
+	}
+	
+	/* if we are internal give it special treatment */
+	if (x) {
+		sc->af = res->ai_family;
+
+		memcpy(&cfg->sipbox, res->ai_addr, res->ai_addrlen);
+		if (getsockname(so, (struct sockaddr *)&cfg->internal, &slen) == -1) {
+			perror("getsockname");
+			free(sc);
+			goto out;
+		}
+	
+		switch (sc->af) {
+		case AF_INET:
+			psin = (struct sockaddr_in *)&cfg->sipbox;
+			psin->sin_port = htons(rport);
+			psin = (struct sockaddr_in *)&cfg->internal;
+			psin->sin_port = htons(lport);	
+			break;
+		default:
+			psin6 = (struct sockaddr_in6 *)&cfg->sipbox;
+			psin6->sin6_port = htons(rport);
+			psin6 = (struct sockaddr_in6 *)&cfg->internal;
+			psin6->sin6_port = htons(lport);	
+			break;
+		}
+
+		memcpy(&sc->local, &cfg->internal, sizeof(sc->local));
+		memcpy(&sc->remote, &cfg->sipbox, sizeof(sc->remote));
+
+		if (bind(sc->so, (struct sockaddr *)&sc->local, \
+			sizeof(struct sockaddr)) == -1) {
+			perror("bind");
+			free(sc);
+			goto out;
+		}
+
+		sc->state = STATE_LISTEN;
+
+	} else {
+		memcpy(&sc->remote, res->ai_addr, res->ai_addrlen);
+		if (getsockname(so, (struct sockaddr *)&sc->local, &slen) == -1) {
+			perror("getsockname");
+			free(sc);
+			goto out;
+		}
+
+		switch (res->ai_family) {
+		case AF_INET:
+			psin = (struct sockaddr_in *)&sc->remote;
+			psin->sin_port = htons(rport);
+			psin = (struct sockaddr_in *)&sc->local;
+			psin->sin_port = htons(lport);	
+			break;
+		default:
+			psin6 = (struct sockaddr_in6 *)&sc->remote;
+			psin6->sin6_port = htons(rport);
+			psin6 = (struct sockaddr_in6 *)&sc->local;
+			psin6->sin6_port = htons(lport);	
+			break;
+		}
+
+		sc->state = STATE_INVITE;
+		sc->activity = sc->connect = time(NULL);
+	}
+
+	SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
+
+	close(so);
+	freeaddrinfo(res);
+	return (sc);
+
+out:
+	close(so);
+	freeaddrinfo(res);
+	return (NULL);
+
+}
+
+void
+timeout_proxima(struct cfg *cfg)
+{
+	struct sipconn *sc, *sc0;
+	time_t now;
+
+
+	now = time(NULL);
+
+	SLIST_FOREACH_SAFE(sc, &cfg->connection, entries, sc0) {
+		if (sc->state == STATE_LISTEN)
+			continue;
+
+		if (difftime(now, sc->activity) > TIMEOUT) {
+			syslog(LOG_INFO, "timeing out connection from %s", 
+				sc->address);
+			delete_sc(cfg, sc);
+		}
+	}
+}
+
+
+void
+delete_sc(struct cfg *cfg, struct sipconn *sc)
+{		
+	free(sc->address);
+
+	SLIST_REMOVE(&cfg->connection, sc, sipconn, entries);
+	
 }
