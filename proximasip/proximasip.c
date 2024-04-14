@@ -231,12 +231,13 @@ main(int argc, char *argv[])
 
 	SLIST_INIT(&head);
 		
-	openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
-	syslog(LOG_INFO, "proximasip starting up");
 
 	if (! debug)
 		daemon(0,0);
+
+	openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	syslog(LOG_INFO, "proximasip starting up");
 
 	pw = getpwnam(PROXIMASIP_USER);
 	if (pw == NULL) {
@@ -290,7 +291,7 @@ main(int argc, char *argv[])
 		if (sel < 1)
 			continue;
 
-		while ((sc = proxima(&cfg, &rset)) != NULL) {
+		if ((sc = proxima(&cfg, &rset)) != NULL) {
 			proxima_work(sc);
 		}
 	}
@@ -303,8 +304,11 @@ int
 listen_proxima(struct cfg *cfg, fd_set *rset)
 {
 	int max = 0;
-	struct timeval tv = {10, 0};
+	struct timeval tv;
 	struct sipconn *sc;
+
+	tv.tv_sec = 10;
+	tv.tv_usec = 0;
 
 	FD_ZERO(rset);
 
@@ -350,7 +354,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 				return NULL;
 			}
 
-			SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc2){
+			SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc2) {
 				if (sc1->state == STATE_LISTEN)
 					continue;
 				
@@ -360,17 +364,17 @@ proxima(struct cfg *cfg, fd_set *rset)
 				switch (sc->af) {
 				case AF_INET6:
 					psin6 = (struct sockaddr_in6 *)&sc1->remote;
-					if (memcmp(psin6, (struct sockaddr_in6 *)&st, \
+					if (memcmp(&psin6->sin6_addr, \
+							&((struct sockaddr_in6 *)&st)->sin6_addr, \
 							sizeof(struct sockaddr_in6)) == 0)  {
 						return (sc1);	
 					}	
 
 					break;
 				default:
-
 					psin = (struct sockaddr_in *)&sc1->remote;
-					if (memcmp(psin, (struct sockaddr_in *)&st, \
-							sizeof(struct sockaddr_in)) == 0) {
+					if (psin->sin_addr.s_addr == 
+							((struct sockaddr_in *)&st)->sin_addr.s_addr) {
 						return (sc1);	
 					}	
 				}
@@ -379,8 +383,8 @@ proxima(struct cfg *cfg, fd_set *rset)
 			switch (st.ss_family) {
 			case AF_INET6:
 				psin6 = (struct sockaddr_in6 *)&st;
-				inet_ntop(AF_INET6, (char *)psin6, (char *)&address, \
-					 sizeof(address));
+				inet_ntop(AF_INET6, &psin6->sin6_addr, \
+					(char *)&address, sizeof(address));
 				rsc = add_socket(cfg, LISTENPORT,address,ntohs(psin6->sin6_port), 0);
 				if (rsc) {
 					rsc->address = strdup(address);
@@ -392,8 +396,8 @@ proxima(struct cfg *cfg, fd_set *rset)
 				break;
 			default:
 				psin = (struct sockaddr_in *)&st;
-				inet_ntop(AF_INET, (char *)psin, (char *)&address, \
-					 sizeof(address));
+				inet_ntop(AF_INET, &psin->sin_addr.s_addr, \
+					(char *)&address, sizeof(address));
 
 				rsc = add_socket(cfg, LISTENPORT, address, ntohs(psin->sin_port), 0);
 				if (rsc) {
@@ -758,7 +762,11 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
-	hints.ai_flags = AI_ADDRCONFIG | AI_CANONNAME;
+	if (x) {
+		hints.ai_flags = AI_CANONNAME;
+	} else {
+		hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
+	}
 
 	error = getaddrinfo(rhost, "5060", &hints, &res0);
 	if (error) {
@@ -786,44 +794,48 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			goto out;
 		}
 
-		memcpy(&sc->local, res->ai_addr, res->ai_addrlen);
-		if ((sc->so = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
-			perror("socket (2)");
+		slen = res->ai_addrlen;
+		if (getsockname(so, (struct sockaddr *)&sc->local, &slen) == -1) {
+			perror("getsockname");
+			free(sc);
+			goto out;
+		}
+		if (getpeername(so, (struct sockaddr *)&sc->remote, &slen) == -1) {
+			perror("getpeername");
 			free(sc);
 			goto out;
 		}
 		
 		/* if we are internal give it special treatment */
 		if (x) {
-			sc->af = res->ai_family;
-			memcpy((char *)&cfg->sipbox, (char *)&res->ai_addr, sizeof(struct sockaddr_storage));
-			slen = res->ai_addrlen;
-			if (getsockname(so, (struct sockaddr *)&cfg->internal, &slen) == -1) {
-				perror("getsockname");
+
+			if ((sc->so = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
+				perror("socket (2)");
 				free(sc);
 				goto out;
 			}
-		
+
+			sc->af = res->ai_family;
+			memcpy((char *)&cfg->sipbox, (char *)&sc->remote, sizeof(struct sockaddr_storage));
+			memcpy((char *)&cfg->internal, (char *)&sc->local, sizeof(sc->local));
+
 			switch (sc->af) {
 			case AF_INET:
-				psin = (struct sockaddr_in *)&cfg->sipbox;
+				psin = (struct sockaddr_in *)&sc->remote;
 				psin->sin_port = htons(rport);
-				psin = (struct sockaddr_in *)&cfg->internal;
+				psin = (struct sockaddr_in *)&sc->local;
 				psin->sin_port = htons(lport);	
 				break;
 			default:
-				psin6 = (struct sockaddr_in6 *)&cfg->sipbox;
+				psin6 = (struct sockaddr_in6 *)&sc->remote;
 				psin6->sin6_port = htons(rport);
-				psin6 = (struct sockaddr_in6 *)&cfg->internal;
+				psin6 = (struct sockaddr_in6 *)&sc->local;
 				psin6->sin6_port = htons(lport);	
 				break;
 			}
 
-			memcpy((char *)&sc->local, (char *)&cfg->internal, sizeof(sc->local));
-			memcpy((char *)&sc->remote, (char *)&cfg->sipbox, sizeof(sc->remote));
-
-			if (bind(sc->so, (struct sockaddr *)&sc->local, \
-				res->ai_addrlen) == -1) {
+			if (bind(sc->so, (struct sockaddr *)&sc->local, slen) \
+					 == -1) {
 				perror("bind");
 				free(sc);
 				goto out;
@@ -832,13 +844,6 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			sc->state = STATE_LISTEN;
 
 		} else {
-			memcpy(&sc->remote, res->ai_addr, res->ai_addrlen);
-			if (getsockname(so, (struct sockaddr *)&sc->local, &slen) == -1) {
-				perror("getsockname");
-				free(sc);
-				goto out;
-			}
-
 			switch (res->ai_family) {
 			case AF_INET:
 				psin = (struct sockaddr_in *)&sc->remote;
@@ -886,7 +891,7 @@ timeout_proxima(struct cfg *cfg)
 			continue;
 
 		if (difftime(now, sc->activity) > TIMEOUT) {
-			syslog(LOG_INFO, "timeing out connection from %s", 
+			syslog(LOG_INFO, "timing out connection from %s", 
 				sc->address);
 			delete_sc(cfg, sc);
 		}
