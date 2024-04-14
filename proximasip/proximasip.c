@@ -34,6 +34,14 @@
 #include <sys/queue.h>
 
 #include <netinet/in.h>
+#define _KERNEL 1
+#include <netinet/ip.h>
+#include <netinet/ip6.h>
+#undef _KERNEL
+#include <netinet/ip_icmp.h>
+#include <netinet/icmp6.h>
+#include <netinet/udp.h>
+
 #include <arpa/inet.h>
 #include <netdb.h>
 
@@ -53,10 +61,14 @@
 #include "sip.h"
 
 #define PROXIMASIP_USER		"_proximasip"
-#define DEFAULT_AVMBOX		"192.168.174.4"
+#define DEFAULT_AVMBOX		"192.168.199.12"
 #define MAX_BUFSZ		65535
 #define LISTENPORT		12345
 #define TIMEOUT			10
+
+#define NO_BIND			0
+#define BIND_PORT_EXT		1
+#define BIND_PORT_INT		2
 
 #define STATE_INVALID		0
 #define STATE_LISTEN		1
@@ -126,10 +138,14 @@ struct cfg {
 
 	struct sockaddr_storage sipbox;			/* AVM box in my case */
 	struct sockaddr_storage internal;		/* internal IP */
+
+	int icmp;		/* icmp socket */
+	int icmp6;		/* icmp6 socket */
 	
 	SLIST_HEAD(, sipconn) connection;
 };
 
+/* prototypes */
 int parse_payload(char *, int);
 int new_payload(char *, int);
 void destroy_payload(void);
@@ -141,6 +157,11 @@ void proxima_work(struct sipconn *);
 void delete_sc(struct cfg *, struct sipconn *);
 struct sipconn * proxima(struct cfg *cfg, fd_set *rset);
 struct sipconn * add_socket(struct cfg *, uint16_t, char *, uint16_t, int);
+void proc_icmp(struct cfg *);
+void proc_icmp6(struct cfg *);
+void icmp_func(struct cfg *, struct sipconn *, char *, int, int);
+void icmp6_func(struct cfg *, struct sipconn *, char *, int, int);
+
 
 int sip_compact = 0;
 char *useragent = "User-Agent: AVM\r\n";
@@ -153,6 +174,7 @@ main(int argc, char *argv[])
 	int debug = 0;
 	int ch;
 	int sel;
+	int no_icmp = 0;
 
 	char myname[256];
 
@@ -164,8 +186,11 @@ main(int argc, char *argv[])
 	
 	cfg.a = DEFAULT_AVMBOX;
 
-	while ((ch = getopt(argc, argv, "a:du:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "Ia:du:p:")) != -1) {
 		switch (ch) {
+		case 'I':
+			no_icmp = 1;
+			break;
 		case 'a':
 			cfg.a = strdup(optarg);
 			if (cfg.p == NULL) {
@@ -206,6 +231,22 @@ main(int argc, char *argv[])
 		}
 	}
 
+	if (! no_icmp) {
+		/* set up the icmp socket early */
+		cfg.icmp = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+		cfg.icmp6 = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMP);
+
+		if ((cfg.icmp == -1) || (cfg.icmp6 == -1)) {
+			fprintf(stderr, "can't set up raw socket for icmp\n");
+		}
+
+		shutdown(cfg.icmp, SHUT_WR);
+		shutdown(cfg.icmp6, SHUT_WR);
+	} else {
+		cfg.icmp = -1;
+		cfg.icmp6 = -1;
+	}
+
 	/* get hosts fqdn name */
 	if (gethostname(myname, sizeof(myname)) == -1) {
 		syslog(LOG_ERR, "no hostname found, setting to localhost");
@@ -220,12 +261,12 @@ main(int argc, char *argv[])
 	SLIST_INIT(&cfg.connection);
 
 	/* set up default listening socket */
-	if (add_socket(&cfg, LISTENPORT, "delphinusdns.org", 5060, 1) == NULL) {
+	if (add_socket(&cfg, LISTENPORT, "delphinusdns.org", 5060, BIND_PORT_EXT) == NULL) {
 		exit(1);
 	}
 
 	/* set up default internal listening socket */
-	if (add_socket(&cfg, 5060, cfg.a, 5060, 1) == NULL) {
+	if (add_socket(&cfg, 5060, cfg.a, 5060, BIND_PORT_INT) == NULL) {
 		exit(1);
 	}
 
@@ -294,6 +335,13 @@ main(int argc, char *argv[])
 		if ((sc = proxima(&cfg, &rset)) != NULL) {
 			proxima_work(sc);
 		}
+	
+		if (FD_ISSET(cfg.icmp, &rset)) {
+			proc_icmp(&cfg);
+		}
+		if (FD_ISSET(cfg.icmp6, &rset)) {
+			proc_icmp6(&cfg);
+		}
 	}
 
 	/* NOTREACHED */
@@ -320,6 +368,20 @@ listen_proxima(struct cfg *cfg, fd_set *rset)
 			max = sc->so;
 
 		FD_SET(sc->so, rset);
+	}
+
+	if (cfg->icmp != -1) {
+		if (cfg->icmp > max)
+			max = cfg->icmp;
+		
+		FD_SET(cfg->icmp, rset);
+	}
+		
+	if (cfg->icmp6 != -1) {
+		if (cfg->icmp6 > max)
+			max = cfg->icmp6;
+		
+		FD_SET(cfg->icmp6, rset);
 	}
 
 	return (select(max + 1, rset, NULL, NULL, &tv));
@@ -385,7 +447,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 				psin6 = (struct sockaddr_in6 *)&st;
 				inet_ntop(AF_INET6, &psin6->sin6_addr, \
 					(char *)&address, sizeof(address));
-				rsc = add_socket(cfg, LISTENPORT,address,ntohs(psin6->sin6_port), 0);
+				rsc = add_socket(cfg, LISTENPORT,address,ntohs(psin6->sin6_port), NO_BIND);
 				if (rsc) {
 					rsc->address = strdup(address);
 					rsc->inbuf = buf;
@@ -399,7 +461,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 				inet_ntop(AF_INET, &psin->sin_addr.s_addr, \
 					(char *)&address, sizeof(address));
 
-				rsc = add_socket(cfg, LISTENPORT, address, ntohs(psin->sin_port), 0);
+				rsc = add_socket(cfg, LISTENPORT, address, ntohs(psin->sin_port), NO_BIND);
 				if (rsc) {
 					rsc->address = strdup(address);
 					rsc->inbuf = buf;
@@ -425,7 +487,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 void
 proxima_work(struct sipconn *sc)
 {
-	int len;
+	//int len;
 
 	sc->activity = time(NULL);
 
@@ -762,7 +824,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_protocol = IPPROTO_UDP;
-	if (x) {
+	if (x != NO_BIND) {
 		hints.ai_flags = AI_CANONNAME;
 	} else {
 		hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
@@ -807,7 +869,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 		}
 		
 		/* if we are internal give it special treatment */
-		if (x) {
+		if (x != NO_BIND) {
 
 			if ((sc->so = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
 				perror("socket (2)");
@@ -837,6 +899,13 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			if (bind(sc->so, (struct sockaddr *)&sc->local, slen) \
 					 == -1) {
 				perror("bind");
+				free(sc);
+				goto out;
+			}
+
+			if ((x == BIND_PORT_INT) && (connect(sc->so, \
+				(struct sockaddr *)&sc->remote, slen) == -1)) {
+				perror("connect");
 				free(sc);
 				goto out;
 			}
@@ -906,4 +975,206 @@ delete_sc(struct cfg *cfg, struct sipconn *sc)
 
 	SLIST_REMOVE(&cfg->connection, sc, sipconn, entries);
 	
+}
+
+void
+proc_icmp(struct cfg *cfg)
+{
+	static char *buf;
+	struct sipconn *sc, *sc0;
+	struct sockaddr_in *rsin, sin;
+	struct icmp icmp;
+
+	socklen_t slen = sizeof(struct sockaddr_in);
+	time_t now;
+	int len;
+
+	if (buf == NULL) {
+		buf = calloc(1, MAX_BUFSZ);
+		if (buf == NULL)
+			return;
+	}
+
+	len = recvfrom(cfg->icmp, buf, MAX_BUFSZ, 0, (struct sockaddr *)&sin,
+		&slen);
+
+	if (len == -1)
+		return;
+
+	now = time(NULL);
+	SLIST_FOREACH_SAFE(sc, &cfg->connection, entries, sc0) {
+		if (sc->state == STATE_LISTEN || sc->af != AF_INET)
+			continue;
+
+		/* opportunistic timeout */
+		if (difftime(now, sc->activity) > TIMEOUT) {
+			syslog(LOG_INFO, "timing out connection from %s", 
+				sc->address);
+			delete_sc(cfg, sc);
+			continue;
+		}
+
+		if (len < ICMP_MINLEN)
+			continue;
+
+		rsin = (struct sockaddr_in *)&sc->remote;
+		if ((rsin->sin_addr.s_addr = sin.sin_addr.s_addr) &&
+				(sin.sin_port == rsin->sin_port)) {
+			switch(icmp.icmp_type) {
+			case ICMP_UNREACH:
+			case ICMP_TIMXCEED:
+				icmp_func(cfg, sc, buf, len, icmp.icmp_type);
+				break;
+			default:
+				/* no action required */
+				break;
+			}
+		}
+
+		/* else continue foreach loop */
+	}
+}
+
+void
+proc_icmp6(struct cfg *cfg)
+{
+	static char *buf = NULL;
+	struct icmp6_hdr icmp6;
+	struct sipconn *sc, *sc0;
+	struct sockaddr_in6 *rsin, sin;
+	socklen_t slen = sizeof(struct sockaddr_in);
+	time_t now;
+	int len;
+
+	if (buf == NULL) {
+		buf = calloc(1, MAX_BUFSZ);
+		if (buf == NULL)
+			return;
+	}
+
+	len = recvfrom(cfg->icmp6, buf, MAX_BUFSZ, 0, (struct sockaddr *)&sin,
+		&slen);
+
+	if (len == -1)
+		return;
+
+
+	now = time(NULL);
+
+	SLIST_FOREACH_SAFE(sc, &cfg->connection, entries, sc0) {
+		if (sc->state == STATE_LISTEN || sc->af != AF_INET6)
+			continue;
+
+		/* opportunistic timeout */
+		if (difftime(now, sc->activity) > TIMEOUT) {
+			syslog(LOG_INFO, "timing out connection from %s", 
+				sc->address);
+			delete_sc(cfg, sc);
+			continue;
+		}
+
+		if (len < sizeof(struct icmp6_hdr))
+			continue;
+
+		rsin = (struct sockaddr_in6 *)&sc->remote;
+		if ((memcmp(&rsin->sin6_addr, &sin.sin6_addr, \
+				sizeof(sin.sin6_addr)) == 0) &&
+				(sin.sin6_port == rsin->sin6_port)) {
+			switch(icmp6.icmp6_type) {
+			case ICMP6_DST_UNREACH:
+			case ICMP6_TIME_EXCEEDED:
+				icmp6_func(cfg, sc, buf, len, icmp6.icmp6_type);
+				break;
+			default:
+				/* no action required */
+				break;
+			}
+		}
+	}
+}
+
+void
+icmp_func(struct cfg *cfg, struct sipconn *sc, char *buf, int len, int type)
+{
+	struct sockaddr_in *lsin, *rsin;
+	struct ip ip;
+	struct icmp icmph;
+	struct udphdr udp;
+	int iplen;
+
+	if (len < ICMP_ADVLENMIN)
+		return;
+
+	memcpy((void *)&icmph, (char *)buf, ICMP_MINLEN);
+	memcpy(&ip, &buf[ICMP_MINLEN], sizeof(struct ip));
+
+	iplen = (4 * ip.ip_hl) + ICMP_MINLEN;
+
+	if (len < (iplen + sizeof(struct udphdr)))
+		return;
+
+	memcpy(&udp, &buf[iplen], sizeof(struct udphdr));
+
+	lsin = (struct sockaddr_in *)&sc->local;
+	rsin = (struct sockaddr_in *)&sc->remote;
+	if ((lsin->sin_addr.s_addr != ip.ip_src.s_addr) &&
+		(lsin->sin_port != udp.uh_sport) &&
+		(rsin->sin_addr.s_addr != ip.ip_dst.s_addr) &&
+		(rsin->sin_port != udp.uh_dport)) {
+		return;
+	}
+
+	/* XXX I'd like to dig deeper but we'll have to see */
+	/* all checks are done, proceed to act on them */
+
+	syslog(LOG_INFO, "dropping state from %s port %u due to ICMP type %s"
+				" code %u", sc->address, ntohs(rsin->sin_port),  \
+				(icmph.icmp_type == ICMP_UNREACH) ? "unreach" : \
+				"timex", icmph.icmp_code);
+
+	delete_sc(cfg, sc);
+}
+
+void
+icmp6_func(struct cfg *cfg, struct sipconn *sc, char *buf, int len, int type)
+{
+	struct sockaddr_in6 *lsin, *rsin;
+	struct ip6_hdr ip6;
+	struct icmp6_hdr icmp6;
+	struct udphdr udp;
+	int iplen;
+
+	if (len < sizeof(struct icmp6_hdr))
+		return;
+
+	memcpy((char *)&icmp6, buf, sizeof(struct icmp6_hdr));
+	memcpy((char *)&ip6, &buf[sizeof(struct ip6_hdr)], sizeof(struct ip6_hdr));
+	if (ip6.ip6_nxt != IPPROTO_UDP)
+		return;
+
+	iplen = (sizeof(struct icmp6_hdr)) + (sizeof(struct ip6_hdr));
+
+	if (len < (iplen + sizeof(struct udphdr)))
+		return;
+
+	memcpy((char *)&udp, &buf[iplen], sizeof(struct udphdr));
+
+	lsin = (struct sockaddr_in6 *)&sc->local;
+	rsin = (struct sockaddr_in6 *)&sc->remote;
+	if (memcmp(&lsin->sin6_addr, &ip6.ip6_src, sizeof(ip6.ip6_src)) &&
+		(lsin->sin6_port != udp.uh_sport) &&
+		memcmp(&rsin->sin6_addr, &ip6.ip6_dst, sizeof(ip6.ip6_dst)) &&
+		(rsin->sin6_port != udp.uh_dport)) {
+		return;
+	}
+
+	/* XXX I'd like to dig deeper but we'll have to see */
+	/* all checks are done, proceed to act on them */
+
+	syslog(LOG_INFO, "IP6 dropping state from %s port %u due to ICMP type %s"
+				" code %u", sc->address, ntohs(rsin->sin6_port),  \
+				(icmp6.icmp6_type == ICMP6_DST_UNREACH) ? "unreach" : \
+				"timex", icmp6.icmp6_code);
+
+	delete_sc(cfg, sc);
 }
