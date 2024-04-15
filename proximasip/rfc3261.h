@@ -35,7 +35,7 @@
 #include "sip.h"
 
 struct {
-	char mline[40];
+	char mline[64];
 	uint64_t flag;
 #define SIP_TO		0x1
 #define SIP_FROM	0x2
@@ -50,7 +50,7 @@ struct {
 #define SIP_BASIC	(SIP_TO|SIP_FROM|SIP_VIA|SIP_CALLID|SIP_CSEQ)
 #define SIP_GENERAL	(SIP_BASIC|SIP_MAXFORWARD|SIP_EXPIRES|SIP_CONTACT)
 	int type;
-#define SIP_HEAD_UNIMP		-1
+#define SIP_HEAD_UNIMP		1000
 
 } ml[]  =  {
 	{"Accept", SIP_NONE, SIP_HEAD_UNIMP}, 

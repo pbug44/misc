@@ -66,7 +66,6 @@
 #define MAX_BUFSZ		65535
 #define LISTENPORT		12345
 #define TIMEOUT			10
-#define MIN_HEADERS		5	/* STATUS, From, To, Via, Call-ID */
 
 #define NO_BIND			0
 #define BIND_PORT_EXT		1
@@ -74,7 +73,10 @@
 
 #define STATE_INVALID		0
 #define STATE_LISTEN		1
-#define STATE_INVITE		2
+#define STATE_TRYING		2
+#define STATE_PROCEEDING	3
+#define STATE_COMPLETED		4
+#define STATE_TERMINATED	5
 
 struct sipdata {
 	uint8_t flags;
@@ -139,6 +141,8 @@ struct sipconn {
 
 	SLIST_HEAD(,parsed) packets;
 	SLIST_ENTRY(sipconn) entries;
+
+	struct sipconn *parent;		/* parent request */
 };
 
 struct cfg {
@@ -161,21 +165,29 @@ struct cfg {
 
 /* prototypes */
 int parse_payload(struct sipconn *);
-int new_payload(struct sipconn *);
+int new_payload(struct parsed *, char *, int);
 void destroy_payload(struct parsed *);
 void add_header(struct parsed *, char *, char *, int);
-int find_header(struct parsed *, int);
+struct sipdata * find_header(struct parsed *, int);
 int listen_proxima(struct cfg *, fd_set *);
 void timeout_proxima(struct cfg *);
 void proxima_work(struct cfg *, struct sipconn *);
 void delete_sc(struct cfg *, struct sipconn *);
-struct sipconn * proxima(struct cfg *cfg, fd_set *rset);
+struct sipconn * copy_sc(struct cfg *, struct sipconn *);
+struct sipconn * proxima(struct cfg *, fd_set *);
 struct sipconn * add_socket(struct cfg *, uint16_t, char *, uint16_t, int);
 void proc_icmp(struct cfg *);
 void proc_icmp6(struct cfg *);
 void icmp_func(struct cfg *, struct sipconn *, char *, int, int);
 void icmp6_func(struct cfg *, struct sipconn *, char *, int, int);
 int check_rfc3261(struct sipconn *, int *);
+int reply_trying(struct cfg *, struct sipconn *);
+struct sipconn * try_proxy(struct cfg *, struct sipconn *);
+struct sipconn * copy_sc(struct cfg *, struct sipconn *);
+
+extern int mybase64_encode(u_char const *, size_t, char *, size_t);
+extern int mybase64_decode(char const *, u_char *, size_t);
+
 
 
 int sip_compact = 0;
@@ -439,21 +451,28 @@ proxima(struct cfg *cfg, fd_set *rset)
 				switch (sc->af) {
 				case AF_INET6:
 					psin6 = (struct sockaddr_in6 *)&sc1->remote;
-					if (memcmp(&psin6->sin6_addr, \
-							&((struct sockaddr_in6 *)&st)->sin6_addr, \
-							sizeof(struct sockaddr_in6)) == 0)  {
+					if ((memcmp(&psin6->sin6_addr,
+							&((struct sockaddr_in6 *)&st)->sin6_addr,
+							sizeof(struct sockaddr_in6)) == 0)  && 
+						(psin6->sin6_port ==
+							((struct sockaddr_in6 *)&st)->sin6_port))
+{
 						return (sc1);	
 					}	
 
 					break;
 				default:
 					psin = (struct sockaddr_in *)&sc1->remote;
-					if (psin->sin_addr.s_addr == 
-							((struct sockaddr_in *)&st)->sin_addr.s_addr) {
+					if ((psin->sin_addr.s_addr == 
+							((struct sockaddr_in *)&st)->sin_addr.s_addr) &&
+						(psin->sin_port == 
+							((struct sockaddr_in *)&st)->sin_port)) {
 						return (sc1);	
 					}	
 				}
 			}
+
+			/* make a new state here */
 				
 			switch (st.ss_family) {
 			case AF_INET6:
@@ -500,7 +519,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 void
 proxima_work(struct cfg *cfg, struct sipconn *sc)
 {
-	struct sipconn *sc0, *sc1; 
+	struct sipconn *sc_c; 
 	struct parsed *packets;
 	int len, siperr;
 
@@ -516,11 +535,16 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		goto out;
 	}
 
-	len = new_payload(sc);
+	packets = SLIST_FIRST(&sc->packets);
+	if (packets == NULL)
+		return;
+	
+	len = new_payload(packets, sc->inbuf, sc->inbuflen);
 	if (len < 0) {
 		return;
 	}
 
+#if 0
 	SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc0) {
 		if ((sc1->state != STATE_LISTEN) || !(sc1->flags & FLAG_INTERNAL))
 			continue;
@@ -535,6 +559,28 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 
 		break;
 	}
+#endif
+
+	switch (sc->state) {
+	case STATE_TRYING:
+		if ((sc_c = try_proxy(cfg, sc)) == NULL) {
+			/* tear it all down, if this fails */
+			//reply_cancel(cfg, sc);
+		} else {
+			reply_trying(cfg, sc_c);
+			sc->state = STATE_PROCEEDING;
+		}
+		break;
+	case STATE_PROCEEDING:
+		break;
+	case STATE_COMPLETED:
+		sc->state = STATE_TERMINATED;
+		break;
+	case STATE_TERMINATED:
+		break;
+	default:
+		break;
+	}
 
 out:
 	packets = SLIST_FIRST(&sc->packets);
@@ -543,7 +589,7 @@ out:
 
 	if (siperr == -1 && sc->state != STATE_LISTEN) {
 		/* this is a format error, drop it here! */
-		syslog(LOG_INFO, "dropping mangled packet state immediately\n");
+		syslog(LOG_INFO, "dropping packet state immediately from %s\n", sc->address);
 		delete_sc(cfg, sc);
 	}
 }
@@ -610,7 +656,7 @@ parse_payload(struct sipconn *sc)
 				n1->flags |= SIP_HEAD_FLAG_BODY;
 				n1->type = 0;
 				SLIST_INSERT_HEAD(&parser->data, n1, entries);
-
+				SLIST_INSERT_HEAD(&sc->packets, parser, entries);
 				return len;
 			} else
 				return (-1);
@@ -646,14 +692,14 @@ parse_payload(struct sipconn *sc)
 
 	
 		if (header == 0) {
-
-			n1->fields = malloc(newlen);
+			n1->fields = malloc(newlen + 1);
 			if (n1->fields == NULL) {
 				perror("malloc");
 				return (-1);
 			}
 
 			memcpy(n1->fields, payload, newlen);
+			n1->fields[newlen] = '\0';
 			n1->fieldlen = newlen;
 			n1->flags |= SIP_HEAD_FLAG_HEADER;
 			n1->type = SIP_HEAD_STATUS;
@@ -666,12 +712,13 @@ parse_payload(struct sipconn *sc)
 					if (tokens[i].type == SIP_HEAD_CONTENTLEN)
 						seencl = 1;
 
-					n1->fields = malloc(newlen);
+					n1->fields = malloc(newlen + 1);
 					if (n1->fields == NULL) {
 						perror("malloc");
 						return (-1);
 					}
 					memcpy(n1->fields, payload, newlen);
+					n1->fields[newlen] = '\0';
 					n1->fieldlen = newlen;
 					n1->flags |= SIP_HEAD_FLAG_HEADER;
 					n1->type = tokens[i].type;
@@ -709,12 +756,13 @@ parse_payload(struct sipconn *sc)
 					break;
 				} else if ((tokens[i].shortform != NULL) && memcmp(payload, tokens[i].shortform, strlen(tokens[i].shortform)) == 0) {
 
-					n1->fields = malloc(newlen);
+					n1->fields = malloc(newlen + 1);
 					if (n1->fields == NULL) {
 						perror("malloc");
 						return (-1);
 					}
 					memcpy(n1->fields, payload, newlen);
+					n1->fields[newlen] = '\0';
 					n1->fieldlen = newlen;
 					n1->flags |= (SIP_HEAD_FLAG_HEADER | SIP_HEAD_FLAG_SHORTFORM);
 					n1->type = tokens[i].type;
@@ -766,25 +814,22 @@ destroy_payload(struct parsed *parser)
 	}
 }
 
-int
+struct sipdata *
 find_header(struct parsed *parser, int type)
 {
 	struct sipdata *np, *n0;
 
 	SLIST_FOREACH_SAFE(np, &parser->data, entries, n0) {
 		if (np->type == type)
-			return 1;
+			return np;
 	}
-	return 0;
+	return NULL;
 }
 
 int
-new_payload(struct sipconn *sc)
+new_payload(struct parsed *packets, char *buf, int len)
 {
 	struct sipdata *np;
-	struct parsed *packets;
-	char *buf = sc->inbuf;
-	int len = sc->inbuflen;
 	char tmpbuf[1024];
 	int offset = 0;
 
@@ -793,10 +838,6 @@ new_payload(struct sipconn *sc)
 
 	/* reconstruct header */
 
-	packets = SLIST_FIRST(&sc->packets);
-	if (packets == NULL)
-		return -1;
-	
 	
 	for (int i = 0; tokens[i].type != SIP_HEAD_MAX; i++) {
 		SLIST_FOREACH(np, &packets->data, entries) {
@@ -815,7 +856,9 @@ new_payload(struct sipconn *sc)
 					tmpbuf[np->replacelen] = '\0';
 					if (tmpbuf[np->replacelen - 2] == '\r')
 						tmpbuf[np->replacelen - 2] = '\0';
+#if DEBUG
 					printf("%s\n", tmpbuf);
+#endif
 					memcpy(&buf[offset], np->replace, np->replacelen);
 					offset += np->replacelen;
 
@@ -1015,7 +1058,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			}
 
 			sc->activity = sc->connect = time(NULL);
-			sc->state = STATE_INVITE;
+			sc->state = STATE_TRYING;
 		}
 
 		SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
@@ -1271,32 +1314,212 @@ icmp6_func(struct cfg *cfg, struct sipconn *sc, char *buf, int len, int type)
 	delete_sc(cfg, sc);
 }
 
+/*
+ * CHECK_RFC3261 - request validation
+ *
+ * RFC 3261 section 16.3 talks about the following things a proxy needs to do
+ * 1. Reasonable Syntax, that's what we're checking here.
+ * 2. URI scheme we do sip:// that's it, otherwise 416
+ * 3. Max-Forwards is being checked here. A value of 0 means we drop it.
+ * 4. Loop Detection (maybe) 
+ * 5. Proxy-Require
+ * 6. Proxy-Authorization
+ *
+ */
+
 int
 check_rfc3261(struct sipconn *sc, int *siperr)
 {
 	struct parsed *parser;
 	struct sipdata *n1;
+	char *status;
+	int statuscode;
 	uint64_t flags = 0;
-	int fieldcount = 0;
+	int statuslen = 0;
 	int i;
 
-	*siperr = -1;			
+	*siperr = -1;
+
+	if (sc->state == STATE_TERMINATED) {
+		syslog(LOG_INFO, "trying to reactivate a terminated convo?  sorry");
+		return -1;
+	}
+
 	parser = SLIST_FIRST(&sc->packets);
 	if (parser == NULL)
 		return -1;
 
 	SLIST_FOREACH(n1, &parser->data, entries) {
-		printf("%s", n1->fields);
-		fieldcount++;
+		if (n1->flags & SIP_HEAD_STATUS) {
+			status = n1->fields;
+			statuslen = n1->fieldlen;
+		}
 		for (i = 0; i < nitems(ml); i++) {
-			if (ml[i].type == n1->type)
+			if ((n1->flags & SIP_HEAD_FLAG_HEADER) &&
+				(ml[i].type == n1->type))
 				flags |= ml[i].flag;
 		}
 	}
 
-	if ((fieldcount < MIN_HEADERS) || ((flags & SIP_GENERAL) != SIP_GENERAL)) {
+#if 0
+	if ((statuscode = getstatus(status, statuslen) < 200) &&
+		(statuscode > 299))
 		return -1;
-	}
+#endif
+
+	if ((flags & SIP_GENERAL) != SIP_GENERAL)
+		return -1;
+	else
+		*siperr = 200;
 
 	return 0;
 }
+
+
+
+struct sipconn *
+copy_sc(struct cfg *cfg, struct sipconn *sc)
+{
+	struct sipconn *sc1;
+
+	sc1 = calloc(1, sizeof(struct sipconn));
+	if (sc1 == NULL) {
+		syslog(LOG_INFO, "calloc: %m");
+		return NULL;
+	}
+
+	memcpy((char *)sc1, (char *)sc, sizeof(struct sipconn));
+	sc1->parent = sc;
+
+	return (sc1);
+}
+
+struct sipconn *
+try_proxy(struct cfg *cfg, struct sipconn *sc)
+{
+	struct sipconn *sc_copy, *sc_int;
+	
+	sc_copy = copy_sc(cfg, sc);
+	if (sc_copy == NULL) {
+		syslog(LOG_INFO, "trying to proxy failed!");
+		return NULL;
+	}
+
+	SLIST_FOREACH(sc_int, &cfg->connection, entries) {
+		if ((sc_int->state != STATE_LISTEN) || !(sc_int->flags & FLAG_INTERNAL))
+			continue;
+
+		break;
+	}
+
+	if (sc_int == NULL) {
+		syslog(LOG_INFO, "internal error, can't find internal sipconn");
+		return NULL;
+	}
+
+	memcpy((char *)&sc_copy->local, (char *)&sc_int->local, sizeof(struct sockaddr_storage));
+	memcpy((char *)&sc_copy->remote, (char *)&sc_int->remote, sizeof(struct sockaddr_storage));
+	
+	sc_copy->parent = sc;
+	sc_copy->so = sc_int->so;
+	sc_copy->state = STATE_TRYING;
+
+	/* now try to send something */
+
+	if (send(sc_copy->so, sc_copy->inbuf, sc_copy->inbuflen, 0) < 0) {
+		syslog(LOG_INFO, "send: %m");
+		return NULL;
+	}
+
+	return (sc_copy);	
+}
+
+int
+reply_trying(struct cfg *cfg, struct sipconn *sc)
+{
+	char buf[512], buf2[512];
+	struct parsed *packet, *from;
+	struct sipdata *sd;
+	struct sipconn *parent = sc->parent;
+	socklen_t sslen;
+	int len;
+	
+	if (parent == NULL)
+		return -1;
+
+	from = SLIST_FIRST(&sc->packets);
+	if (from == NULL)
+		return -1;
+
+	sd = SLIST_FIRST(&from->data);
+	if (sd == NULL)
+		return -1;
+
+	packet = (struct parsed *)calloc(1, sizeof(struct parsed));		
+	if (packet == NULL) {
+		perror("calloc");
+		return (-1);
+	}
+
+	packet->id = (uint64_t)arc4random();
+	SLIST_INIT(&packet->data);
+
+
+	add_header(packet, "SIP/2.0", " 100 Trying", SIP_HEAD_STATUS);
+
+	mybase64_encode((char *)packet->id, 8, buf2, sizeof(buf2));
+	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
+		cfg->myname, buf2);
+
+	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
+	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
+		goto out;
+
+	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+
+	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
+		cfg->myname, packet->id);
+
+	add_header(packet, "From:", buf, SIP_HEAD_FROM);
+
+	snprintf(buf, sizeof(buf), " %llX@%s\r\n", packet->id, cfg->myname); 
+	add_header(packet, "Call-ID:", buf, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
+		goto out;
+	}
+	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+
+	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", cfg->myname);
+	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
+
+	add_header(packet, "Content-Type:", " application/sdp\r\n", 
+		SIP_HEAD_CONTENTTYPE);
+
+	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
+
+	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	if (len < 0) {
+		goto out;
+	}
+	
+	sslen = (parent->remote.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+	sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen);
+
+	sc->activity = time(NULL);
+	parent->activity = sc->activity;
+
+out:
+	free(packet);
+	return -1;
+
+}
+
+#if 0
+int
+reply_cancel(struct sipconn *sc)
+{
+
+}
+#endif

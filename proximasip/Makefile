@@ -1,5 +1,5 @@
 PROG= proximasip
-SRCS= proximasip.c
+SRCS= util.c base64.c proximasip.c
 
 CFLAGS= -g -Wall 
 LDFLAGS= -g -Wall
