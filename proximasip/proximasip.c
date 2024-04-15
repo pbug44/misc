@@ -74,8 +74,6 @@
 #define STATE_LISTEN		1
 #define STATE_INVITE		2
 
-SLIST_HEAD(, sipdata) head;
-
 struct sipdata {
 	uint8_t flags;
 #define SIP_HEAD_FLAG_HEADER	0x1
@@ -99,7 +97,18 @@ struct sipdata {
 
 
 	SLIST_ENTRY(sipdata) entries;
-} *n1, *n2, *np;
+};
+
+
+struct parsed {
+	uint64_t id;
+	int direction;
+#define SIP_INBOUND	0
+#define SIP_OUTBOUND	1
+
+	SLIST_HEAD(,sipdata) data;
+	SLIST_ENTRY(parsed) entries;
+};
 
 
 struct sipconn {
@@ -123,7 +132,8 @@ struct sipconn {
 	int inbuflen;	
 	char *outbuf;
 	int outbuflen;
-	
+
+	SLIST_HEAD(,parsed) packets;
 	SLIST_ENTRY(sipconn) entries;
 };
 
@@ -146,11 +156,11 @@ struct cfg {
 };
 
 /* prototypes */
-int parse_payload(char *, int);
-int new_payload(char *, int);
-void destroy_payload(void);
-void add_header(char *, char *, int);
-int find_header(int);
+int parse_payload(struct sipconn *);
+int new_payload(struct sipconn *);
+void destroy_payload(struct parsed *);
+void add_header(struct parsed *, char *, char *, int);
+int find_header(struct parsed *, int);
 int listen_proxima(struct cfg *, fd_set *);
 void timeout_proxima(struct cfg *);
 void proxima_work(struct sipconn *);
@@ -269,10 +279,6 @@ main(int argc, char *argv[])
 	if (add_socket(&cfg, 5060, cfg.a, 5060, BIND_PORT_INT) == NULL) {
 		exit(1);
 	}
-
-	SLIST_INIT(&head);
-		
-
 
 	if (! debug)
 		daemon(0,0);
@@ -491,12 +497,12 @@ proxima_work(struct sipconn *sc)
 
 	sc->activity = time(NULL);
 
-#if 0
-	if (parse_payload(sc->inbuf, sc->inbuflen) < 0) {
+	if (parse_payload(sc) < 0) {
 		fprintf(stderr, "parse_payload failure, skip\n");
 		return;
 	}
 
+#if 0
 	len = new_payload(sc->inbuf, sc->inbuflen);
 	if (len < 0) {
 		return;
@@ -516,13 +522,40 @@ proxima_work(struct sipconn *sc)
  */
 
 int
-parse_payload(char *payload, int len)
+parse_payload(struct sipconn *sc)
 {
+	struct parsed *parser;
+	struct sipdata *n1;
 	char *nl;
+	int count = 0;
 
 	int newlen, i;
 	int header = 0;
 	int seencl = 0;
+	
+	char *payload = sc->inbuf;
+	int len = sc->inbuflen;
+
+	SLIST_INIT(&sc->packets);
+
+	/* 
+	 * SAFETY!!! remove later!
+	 */
+	SLIST_FOREACH(parser, &sc->packets, entries) {
+		count++;
+	}
+
+	if (count > 2)
+		return -1;
+
+	parser = (struct parsed *)calloc(1, sizeof(struct parsed));		
+	if (parser == NULL) {
+		perror("calloc");
+		return (-1);
+	}
+
+	parser->id = (uint64_t)arc4random();	/* all packets are unique */
+	SLIST_INIT(&parser->data);
 
 	do {
 		nl = memchr(payload, '\n', len);
@@ -544,7 +577,7 @@ parse_payload(char *payload, int len)
 				n1->fieldlen = len;
 				n1->flags |= SIP_HEAD_FLAG_BODY;
 				n1->type = 0;
-				SLIST_INSERT_HEAD(&head, n1, entries);
+				SLIST_INSERT_HEAD(&parser->data, n1, entries);
 
 				return len;
 			} else
@@ -574,7 +607,7 @@ parse_payload(char *payload, int len)
 			n1->fieldlen = len;
 			n1->flags |= SIP_HEAD_FLAG_BODY;
 			n1->type = 0;
-			SLIST_INSERT_HEAD(&head, n1, entries);
+			SLIST_INSERT_HEAD(&parser->data, n1, entries);
 
 			break;
 		}
@@ -592,7 +625,7 @@ parse_payload(char *payload, int len)
 			n1->fieldlen = newlen;
 			n1->flags |= SIP_HEAD_FLAG_HEADER;
 			n1->type = SIP_HEAD_STATUS;
-			SLIST_INSERT_HEAD(&head, n1, entries);
+			SLIST_INSERT_HEAD(&parser->data, n1, entries);
 			header++;
 
 		} else {
@@ -639,7 +672,7 @@ parse_payload(char *payload, int len)
 					} 
 						
 					
-					SLIST_INSERT_HEAD(&head, n1, entries);
+					SLIST_INSERT_HEAD(&parser->data, n1, entries);
 
 					break;
 				} else if ((tokens[i].shortform != NULL) && memcmp(payload, tokens[i].shortform, strlen(tokens[i].shortform)) == 0) {
@@ -654,7 +687,7 @@ parse_payload(char *payload, int len)
 					n1->flags |= (SIP_HEAD_FLAG_HEADER | SIP_HEAD_FLAG_SHORTFORM);
 					n1->type = tokens[i].type;
 					
-					SLIST_INSERT_HEAD(&head, n1, entries);
+					SLIST_INSERT_HEAD(&parser->data, n1, entries);
 					break;
 				}
 			}
@@ -672,11 +705,13 @@ parse_payload(char *payload, int len)
 	} while (len >= 0);
 
 	if (sip_compact) {
-		if (! find_header(SIP_HEAD_CONTENTTYPE)) {
-			add_header("Content-Type:", 
+		if (! find_header(parser, SIP_HEAD_CONTENTTYPE)) {
+			add_header(parser, "Content-Type:", 
 				" application/sdp\r\n", SIP_HEAD_CONTENTTYPE);
 		}
 	}
+
+	SLIST_INSERT_HEAD(&sc->packets, parser, entries);
 
 	return (0);
 }
@@ -685,22 +720,26 @@ parse_payload(char *payload, int len)
 
 
 void
-destroy_payload(void)
+destroy_payload(struct parsed *parser)
 {
-	while (!SLIST_EMPTY(&head)) {
-             n1 = SLIST_FIRST(&head);
+	struct sipdata *n1;
+
+	while (!SLIST_EMPTY(&parser->data)) {
+             n1 = SLIST_FIRST(&parser->data);
 	     free(n1->fields);
 	     if (n1->replacelen)
 		free(n1->replace);
-             SLIST_REMOVE_HEAD(&head, entries);
+             SLIST_REMOVE_HEAD(&parser->data, entries);
              free(n1);
 	}
 }
 
 int
-find_header(int type)
+find_header(struct parsed *parser, int type)
 {
-	SLIST_FOREACH(np, &head, entries) {
+	struct sipdata *np, *n0;
+
+	SLIST_FOREACH_SAFE(np, &parser->data, entries, n0) {
 		if (np->type == type)
 			return 1;
 	}
@@ -708,8 +747,12 @@ find_header(int type)
 }
 
 int
-new_payload(char *buf, int len)
+new_payload(struct sipconn *sc)
 {
+	struct sipdata *np;
+	struct parsed *packets;
+	char *buf = sc->inbuf;
+	int len = sc->inbuflen;
 	char tmpbuf[1024];
 	int offset = 0;
 
@@ -717,9 +760,14 @@ new_payload(char *buf, int len)
 		return len;
 
 	/* reconstruct header */
+
+	packets = SLIST_FIRST(&sc->packets);
+	if (packets == NULL)
+		return -1;
+	
 	
 	for (int i = 0; tokens[i].type != SIP_HEAD_MAX; i++) {
-		SLIST_FOREACH(np, &head, entries) {
+		SLIST_FOREACH(np, &packets->data, entries) {
 			if (np->flags & SIP_HEAD_FLAG_BODY)
 				continue;
 
@@ -765,7 +813,7 @@ new_payload(char *buf, int len)
 	/* reconstruct body */
 
 
-	SLIST_FOREACH(np, &head, entries) {
+	SLIST_FOREACH(np, &packets->data, entries) {
 		if (!(np->flags & SIP_HEAD_FLAG_BODY))
 			continue;
 
@@ -773,7 +821,9 @@ new_payload(char *buf, int len)
 		tmpbuf[np->fieldlen] = '\0';
 		if (tmpbuf[np->fieldlen - 2] == '\r')
 			tmpbuf[np->fieldlen - 2] = '\0';
+#if DEBUG
 		printf("%s\n", tmpbuf);
+#endif
 		memcpy(&buf[offset], np->fields, np->fieldlen);
 		offset += np->fieldlen;
 		break;
@@ -784,8 +834,9 @@ new_payload(char *buf, int len)
 
 
 void
-add_header(char *header, char *contents, int type)
+add_header(struct parsed *parser, char *header, char *contents, int type)
 {
+	struct sipdata *n1;
 	int len = strlen(header) + strlen(contents);
 
 	n1 = calloc(sizeof(struct sipdata), 1);
@@ -807,7 +858,7 @@ add_header(char *header, char *contents, int type)
 	memcpy((&n1->fields[strlen(header)]), 
 		contents, strlen(contents));
 
-	SLIST_INSERT_HEAD(&head, n1, entries);
+	SLIST_INSERT_HEAD(&parser->data, n1, entries);
 }
 
 struct sipconn *
@@ -971,8 +1022,14 @@ timeout_proxima(struct cfg *cfg)
 void
 delete_sc(struct cfg *cfg, struct sipconn *sc)
 {		
-	free(sc->address);
+	struct parsed *packets = SLIST_FIRST(&sc->packets);
 
+	if (packets != NULL) { 
+		destroy_payload(packets);	
+	}
+
+	free(packets);
+	free(sc->address);
 	SLIST_REMOVE(&cfg->connection, sc, sipconn, entries);
 	
 }
