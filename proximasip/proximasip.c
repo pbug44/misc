@@ -115,6 +115,8 @@ struct sipconn {
 	int af;				/* address family */
 	int addrlen;			/* address length */
 
+	int flags;			/* some flags */
+#define FLAG_INTERNAL			1
 	int so;				/* socket */
 	int state;			/* state of connection */
 	int auth;			/* authentication flag */
@@ -163,7 +165,7 @@ void add_header(struct parsed *, char *, char *, int);
 int find_header(struct parsed *, int);
 int listen_proxima(struct cfg *, fd_set *);
 void timeout_proxima(struct cfg *);
-void proxima_work(struct sipconn *);
+void proxima_work(struct cfg *, struct sipconn *);
 void delete_sc(struct cfg *, struct sipconn *);
 struct sipconn * proxima(struct cfg *cfg, fd_set *rset);
 struct sipconn * add_socket(struct cfg *, uint16_t, char *, uint16_t, int);
@@ -339,7 +341,7 @@ main(int argc, char *argv[])
 			continue;
 
 		if ((sc = proxima(&cfg, &rset)) != NULL) {
-			proxima_work(sc);
+			proxima_work(&cfg, sc);
 		}
 	
 		if (FD_ISSET(cfg.icmp, &rset)) {
@@ -491,9 +493,12 @@ proxima(struct cfg *cfg, fd_set *rset)
 
 
 void
-proxima_work(struct sipconn *sc)
+proxima_work(struct cfg *cfg, struct sipconn *sc)
 {
-	//int len;
+	struct sipconn *sc0, *sc1; 
+	struct parsed *packets;
+	socklen_t sslen;
+	int len;
 
 	sc->activity = time(NULL);
 
@@ -502,18 +507,37 @@ proxima_work(struct sipconn *sc)
 		return;
 	}
 
-#if 0
-	len = new_payload(sc->inbuf, sc->inbuflen);
+	len = new_payload(sc);
 	if (len < 0) {
 		return;
 	}
 
-	destroy_payload();
+	SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc0) {
+		if ((sc1->state != STATE_LISTEN) || !(sc1->flags & FLAG_INTERNAL))
+			continue;
 
-	if (sendto(sc->so, buf, len, 0, (struct sockaddr*)&sin, sslen) < 0) {
-		perror("write");
+		/* XXX we haven't done the parsing here, there could be more
+			 than 1 connection from remote
+		 */
+		
+		if (sc1->remote.ss_family == AF_INET6)
+			sslen = sizeof(struct sockaddr_in6);
+		else
+			sslen = sizeof(struct sockaddr_in);
+
+		if (sendto(sc1->so, sc->inbuf, len, 0, (struct sockaddr*)&sc1->remote, sslen) < 0) {
+			perror("write");
+		}
+
+		break;
 	}
-#endif
+
+	
+	packets = SLIST_FIRST(&sc->packets);
+	if (packets != NULL)
+		destroy_payload(packets);
+
+
 }
 
 
@@ -960,6 +984,9 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 				free(sc);
 				goto out;
 			}
+
+			if (x == BIND_PORT_INT)
+				sc->flags |= FLAG_INTERNAL;
 
 			sc->state = STATE_LISTEN;
 
