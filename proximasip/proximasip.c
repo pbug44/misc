@@ -26,7 +26,7 @@
  * 
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <sys/time.h>
@@ -1276,7 +1276,9 @@ check_rfc3261(struct sipconn *sc, int *siperr)
 {
 	struct parsed *parser;
 	struct sipdata *n1;
+	uint64_t flags = 0;
 	int fieldcount = 0;
+	int i;
 
 	*siperr = -1;			
 	parser = SLIST_FIRST(&sc->packets);
@@ -1286,9 +1288,13 @@ check_rfc3261(struct sipconn *sc, int *siperr)
 	SLIST_FOREACH(n1, &parser->data, entries) {
 		printf("%s", n1->fields);
 		fieldcount++;
+		for (i = 0; i < nitems(ml); i++) {
+			if (ml[i].type == n1->type)
+				flags |= ml[i].flag;
+		}
 	}
 
-	if (fieldcount < MIN_HEADERS) {
+	if ((fieldcount < MIN_HEADERS) || ((flags & SIP_GENERAL) != SIP_GENERAL)) {
 		return -1;
 	}
 

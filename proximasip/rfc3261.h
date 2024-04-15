@@ -32,53 +32,71 @@
 #ifndef _RFC3261_H
 #define _RFC3261_H
 
+#include "sip.h"
+
 struct {
 	char mline[40];
+	uint64_t flag;
+#define SIP_TO		0x1
+#define SIP_FROM	0x2
+#define SIP_VIA		0x4
+#define SIP_CALLID	0x8
+#define SIP_CSEQ	0x10
+#define SIP_CONTACT	0x20
+#define SIP_MAXFORWARD	0x40
+#define SIP_EXPIRES	0x80
+#define SIP_NONE	0x100	/* special one */
+
+#define SIP_BASIC	(SIP_TO|SIP_FROM|SIP_VIA|SIP_CALLID|SIP_CSEQ)
+#define SIP_GENERAL	(SIP_BASIC|SIP_MAXFORWARD|SIP_EXPIRES|SIP_CONTACT)
+	int type;
+#define SIP_HEAD_UNIMP		-1
+
 } ml[]  =  {
-	{"Accept"},
-	{"Accept-Encoding"},
-	{"Accept-Language"},
-	{"Alert-Info"},
-	{"Allow"},
-	{"Authentication-Info"},
-	{"Authorization"},
-	{"Call-ID"},
-	{"Call-Info"},
-	{"Contact"},
-	{"Content-Disposition"},
-	{"Content-Encoding"},
-	{"Content-Language"},
-	{"Content-Length"},
-	{"Content-Type"},
-	{"CSeq"},
-	{"Date"},
-	{"Error-Info"},
-	{"Expires"},
-	{"From"},
-	{"In-Reply-To"},
-	{"Max-Forwards"},
-	{"MIME-Version"},
-	{"Min-Expires"},
-	{"Organization"},
-	{"Priority"},
-	{"Proxy-Authenticate"},
-	{"Proxy-Authorization"},
-	{"Proxy-Require"},
-	{"Record-Route"},
-	{"Reply-To"},
-	{"Require"},
-	{"Retry-After"},
-	{"Route"},
-	{"Server"},
-	{"Subject"},
-	{"Supported"},
-	{"Timestamp"},
-	{"To"},
-	{"Unsupported"},
-	{"User-Agent"},
-	{"Via"},
-	{"Warning"},
-	{"WWW-Authenticate"}
+	{"Accept", SIP_NONE, SIP_HEAD_UNIMP}, 
+	{"Accept-Encoding", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Accept-Language", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Alert-Info", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Allow", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Authentication-Info", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Authorization", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Call-ID", SIP_CALLID, SIP_HEAD_CALLERID},
+	{"Call-Info", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Contact", SIP_CONTACT, SIP_HEAD_CONTACT},
+	{"Content-Disposition", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Content-Encoding", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Content-Language", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Content-Length", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Content-Type", SIP_NONE, SIP_HEAD_UNIMP},
+	{"CSeq", SIP_CSEQ, SIP_HEAD_CSEQ},
+	{"Date", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Error-Info", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Expires", SIP_EXPIRES, SIP_HEAD_EXPIRES},
+	{"From", SIP_FROM, SIP_HEAD_FROM},
+	{"In-Reply-To", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Max-Forwards", SIP_MAXFORWARD, SIP_HEAD_MAXFORWARDS},
+	{"MIME-Version", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Min-Expires", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Organization", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Priority", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Proxy-Authenticate", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Proxy-Authorization", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Proxy-Require", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Record-Route", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Reply-To", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Require", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Retry-After", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Route", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Server", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Subject", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Supported", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Timestamp", SIP_NONE, SIP_HEAD_UNIMP},
+	{"To", SIP_TO, SIP_HEAD_TO},
+	{"Unsupported", SIP_NONE, SIP_HEAD_UNIMP},
+	{"User-Agent", SIP_NONE, SIP_HEAD_UNIMP},
+	{"Via", SIP_VIA, SIP_HEAD_VIA},
+	{"Warning", SIP_NONE, SIP_HEAD_UNIMP},
+	{"WWW-Authenticate", SIP_NONE, SIP_HEAD_UNIMP}
 };
 
 
