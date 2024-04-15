@@ -345,6 +345,8 @@ main(int argc, char *argv[])
 
 		if ((sc = proxima(&cfg, &rset)) != NULL) {
 			proxima_work(&cfg, sc);
+
+			/* can't use sc anymore because it could be gone */
 		}
 	
 		if (FD_ISSET(cfg.icmp, &rset)) {
@@ -539,6 +541,11 @@ out:
 	if (packets != NULL)
 		destroy_payload(packets);
 
+	if (siperr == -1 && sc->state != STATE_LISTEN) {
+		/* this is a format error, drop it here! */
+		syslog(LOG_INFO, "dropping mangled packet state immediately\n");
+		delete_sc(cfg, sc);
+	}
 }
 
 
