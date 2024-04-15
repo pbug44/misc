@@ -119,16 +119,77 @@ struct sipconn {
 	int af;				/* address family */
 	int addrlen;			/* address length */
 
-	int flags;			/* some flags */
-#define FLAG_INTERNAL			1
+	uint64_t flags;			/* some flags */
+
+#define INVITE_RETRANSMIT		0x2
+#define INVITE_TIMEOUT			0x4
+#define PROXY_INVITE_TIMEOUT		0x8
+#define RESPONSE_RETRANSMIT0		0x10
+#define NONINVITE_RETRANSMIT		0x20
+#define NONINVITE_TRANSACTION		0x40
+#define INVITE_RESPONSE_RETRANSMIT	0x80
+#define ACK_RECEIPT_TIMEOUT		0x100
+#define ACK_RETRANSMIT			0x200
+#define NONINVITE_REQUEST		0x400
+#define RESPONSE_RETRANSMIT1		0x800
+
+	int internal;			/* inward facing proxy conn */
 	int so;				/* socket */
 	int state;			/* state of connection */
 	int auth;			/* authentication flag */
 
 	time_t connect;			/* first connection time */
 	time_t activity;		/* last activity */
+#define TIMER_MAX	11
+	time_t timers[TIMER_MAX];	/* several timers */
+#define TIMER_A		0		/* INVITE request re-transmit for UDP */
+#define TIMER_B		1		/* INVITE timeout */
+#define TIMER_C		2		/* Proxy INVITE timeout */
+#define TIMER_D		3		/* wait time (response retransmits) */
+#define TIMER_E		4		/* non-INVITE retransmit interval UDP */
+#define TIMER_F		5		/* non-INVITE transaction timeout */
+#define TIMER_G		6		/* INVITE response retransmit intrval */
+#define TIMER_H		7		/* wait time for ACK Receipt */
+#define TIMER_I		8		/* wait time for ACK retransmits */
+#define TIMER_J		9		/* wait time for on-INVITE rtransmits */
+#define TIMER_K		10		/* wait time for response retransmits */
 
-	char *hostname;			/* hostname facing the world */
+
+/* Table 4 of RFC 3621 */
+
+#define SIP_T1		1		/* RTT estimate 1 second (granularity)*/
+#define SIP_T2		4		/* retransmit non-invite requests */
+#define SIP_T3		SIP_T2		/* ..and INVITE responses */
+#define SIP_T4		5		/* max duration for a message */
+
+#define SET_TIMER_A(_sc, _t)	((_sc)->timers[TIMER_A] = (_t + SIP_T1))
+#define SET_TIMER_B(_sc, _t) 	((_sc)->timers[TIMER_B] = (_t + (64 * SIP_T1)))
+#define SET_TIMER_C(_sc, _t)	((_sc)->timers[TIMER_C] = (_t + (3 * 60)))
+#define SET_TIMER_D(_sc, _t)	((_sc)->timers[TIMER_D] = (_t + (48)))
+#define SET_TIMER_E(_sc, _t)	((_sc)->timers[TIMER_E] = (_t + SIP_T1))
+#define SET_TIMER_F(_sc, _t)	((_sc)->timers[TIMER_F] = (_t + (64 * SIP_T1)))
+#define SET_TIMER_G(_sc, _t)	((_sc)->timers[TIMER_G] = (_t + SIP_T1))
+#define SET_TIMER_H(_sc, _t)	((_sc)->timers[TIMER_H] = (_t + (64 * SIP_T1)))
+#define SET_TIMER_I(_sc, _t)	((_sc)->timers[TIMER_I] = (_t + SIP_T4))
+#define SET_TIMER_J(_sc, _t)	(_sc)->timers[TIMER_J] = (_t + (64 * SIP_T1))
+#define SET_TIMER_K(_sc, _t)	((_sc)->timers[TIMER_K] = (_t + SIP_T4))
+
+#define SET_ALL_TIMERS(_sc, now) 	do { \
+		SET_TIMER_A(_sc, now); \
+		SET_TIMER_B(_sc, now); \
+		SET_TIMER_C(_sc, now); \
+		SET_TIMER_D(_sc, now); \
+		SET_TIMER_E(_sc, now); \
+		SET_TIMER_F(_sc, now); \
+		SET_TIMER_G(_sc, now); \
+		SET_TIMER_H(_sc, now); \
+		SET_TIMER_I(_sc, now); \
+		SET_TIMER_J(_sc, now); \
+		SET_TIMER_K(_sc, now); \
+} while (0)
+
+
+	char *laddress;			/* local address */
 	char *address;			/* remote address */
 
 	struct sockaddr_storage local;	/* local IP */
@@ -351,6 +412,7 @@ main(int argc, char *argv[])
 	for (;;) {
 		timeout_proxima(&cfg);
 
+
 		sel = listen_proxima(&cfg, &rset);
 		if (sel < 1)
 			continue;
@@ -380,7 +442,7 @@ listen_proxima(struct cfg *cfg, fd_set *rset)
 	struct timeval tv;
 	struct sipconn *sc;
 
-	tv.tv_sec = 10;
+	tv.tv_sec = SIP_T1;
 	tv.tv_usec = 0;
 
 	FD_ZERO(rset);
@@ -482,6 +544,11 @@ proxima(struct cfg *cfg, fd_set *rset)
 				rsc = add_socket(cfg, LISTENPORT,address,ntohs(psin6->sin6_port), NO_BIND);
 				if (rsc) {
 					rsc->address = strdup(address);
+					if (rsc->address == NULL) {
+						syslog(LOG_INFO, "strdup: %m");
+						return (NULL);
+					}
+					rsc->laddress = sc->address;	/*dont need to ever clean*/
 					rsc->inbuf = buf;
 					rsc->inbuflen = len;
 				}
@@ -496,6 +563,11 @@ proxima(struct cfg *cfg, fd_set *rset)
 				rsc = add_socket(cfg, LISTENPORT, address, ntohs(psin->sin_port), NO_BIND);
 				if (rsc) {
 					rsc->address = strdup(address);
+					if (rsc->address == NULL) {
+						syslog(LOG_INFO, "strdup: %m");
+						return (NULL);
+					}
+					rsc->laddress = sc->address;	/*dont need to ever clean*/
 					rsc->inbuf = buf;
 					rsc->inbuflen = len;
 				}
@@ -546,7 +618,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 
 #if 0
 	SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc0) {
-		if ((sc1->state != STATE_LISTEN) || !(sc1->flags & FLAG_INTERNAL))
+		if ((sc1->state != STATE_LISTEN) || !(sc1->internal))
 			continue;
 
 		/* XXX we haven't done the parsing here, there could be more
@@ -943,8 +1015,9 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	struct sipconn *sc;
 	struct sockaddr_in *psin;
 	struct sockaddr_in6 *psin6;
-	int so, error;
+	char laddress[INET6_ADDRSTRLEN];
 	socklen_t slen = sizeof(struct sockaddr_storage);
+	int so, error;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -1037,8 +1110,16 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			}
 
 			if (x == BIND_PORT_INT)
-				sc->flags |= FLAG_INTERNAL;
+				sc->internal = 1;
 
+			inet_ntop(res->ai_family, &sc->local, laddress, sizeof(laddress));
+
+			sc->laddress = strdup(laddress);
+			if (sc->laddress == NULL) {
+				perror("strdup");
+				free(sc);
+				goto out;
+			}
 			sc->state = STATE_LISTEN;
 
 		} else {
@@ -1085,12 +1166,87 @@ timeout_proxima(struct cfg *cfg)
 	now = time(NULL);
 
 	SLIST_FOREACH_SAFE(sc, &cfg->connection, entries, sc0) {
+		/* skip all listeners */
 		if (sc->state == STATE_LISTEN)
 			continue;
 
-		if (difftime(now, sc->activity) > TIMEOUT) {
-			syslog(LOG_INFO, "timing out connection from %s", 
-				sc->address);
+		sc->flags = 0;
+
+		/* check/set timers and rearm */
+		if (difftime(now, sc->timers[TIMER_A]) > 0) {
+			sc->flags |= INVITE_RETRANSMIT;
+			SET_TIMER_A(sc, now); 		/* tick */
+		}
+		if (difftime(now, sc->timers[TIMER_B]) > 0) {
+			sc->flags |= INVITE_TIMEOUT;
+			SET_TIMER_B(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_C]) > 0) {
+			sc->flags |= PROXY_INVITE_TIMEOUT;
+			SET_TIMER_C(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_D]) > 0) {
+			sc->flags |= RESPONSE_RETRANSMIT0;
+			SET_TIMER_D(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_E]) > 0) {
+			sc->flags |= NONINVITE_RETRANSMIT;
+			SET_TIMER_E(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_F]) > 0) {
+			sc->flags |= NONINVITE_TRANSACTION;
+			SET_TIMER_F(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_G]) > 0) {
+			sc->flags |= INVITE_RESPONSE_RETRANSMIT;
+			SET_TIMER_G(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_H]) > 0) {
+			sc->flags |= ACK_RECEIPT_TIMEOUT;
+			SET_TIMER_H(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_I]) > 0) {
+			sc->flags |= ACK_RETRANSMIT;
+			SET_TIMER_I(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_J]) > 0) {
+			sc->flags |= NONINVITE_REQUEST;
+			SET_TIMER_J(sc, now);
+		}
+		if (difftime(now, sc->timers[TIMER_K]) > 0) {
+			sc->flags |= RESPONSE_RETRANSMIT1;
+			SET_TIMER_K(sc, now);
+		}
+
+		/* do actions */
+
+		if (sc->state & STATE_TRYING) {
+			/* this is when we just got the INVITE or NON-INVITE */
+			if (sc->flags & INVITE_TIMEOUT) {
+				delete_sc(cfg, sc);
+				sc->flags &= ~(INVITE_TIMEOUT);
+			} else if (sc->flags & PROXY_INVITE_TIMEOUT) {
+				delete_sc(cfg, sc);
+				sc->flags &= ~(PROXY_INVITE_TIMEOUT);
+			} else if (sc->flags & INVITE_RESPONSE_RETRANSMIT) {
+				//retransmit_sc(cfg, sc);	
+				sc->flags &= ~(INVITE_RESPONSE_RETRANSMIT);
+			}
+
+		} else if (sc->state & STATE_PROCEEDING) {
+			/* this is when we're Ringing */
+			if (sc->flags & INVITE_TIMEOUT) {
+				delete_sc(cfg, sc);
+				sc->flags &= ~(INVITE_TIMEOUT);
+			} else if (sc->flags & PROXY_INVITE_TIMEOUT) {
+				delete_sc(cfg, sc);
+				sc->flags &= ~(PROXY_INVITE_TIMEOUT);
+			} 
+		} else if (sc->state & STATE_COMPLETED) {
+			/* this is when we got ACK'ed to the 4 way handshake */
+
+		} else {
+			/* we're in terminated mode delete transaction */
 			delete_sc(cfg, sc);
 		}
 	}
@@ -1406,7 +1562,7 @@ try_proxy(struct cfg *cfg, struct sipconn *sc)
 	}
 
 	SLIST_FOREACH(sc_int, &cfg->connection, entries) {
-		if ((sc_int->state != STATE_LISTEN) || !(sc_int->flags & FLAG_INTERNAL))
+		if ((sc_int->state != STATE_LISTEN) || !(sc_int->internal))
 			continue;
 
 		break;
@@ -1469,7 +1625,7 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 
 	mybase64_encode((char *)packet->id, 8, buf2, sizeof(buf2));
 	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
-		cfg->myname, buf2);
+		sc->laddress, buf2);
 
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
 	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
@@ -1478,11 +1634,11 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
 
 	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
-		cfg->myname, packet->id);
+		sc->laddress, packet->id);
 
 	add_header(packet, "From:", buf, SIP_HEAD_FROM);
 
-	snprintf(buf, sizeof(buf), " %llX@%s\r\n", packet->id, cfg->myname); 
+	snprintf(buf, sizeof(buf), " %llX@%s\r\n", packet->id, sc->laddress); 
 	add_header(packet, "Call-ID:", buf, SIP_HEAD_CALLERID);
 
 	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
@@ -1490,7 +1646,7 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 	}
 	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
 
-	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", cfg->myname);
+	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
 	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
 
 	add_header(packet, "Content-Type:", " application/sdp\r\n", 
@@ -1505,7 +1661,94 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 	
 	sslen = (parent->remote.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 
-	sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen);
+	if (sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen) < 0) {
+		goto out;
+	}
+
+	sc->activity = time(NULL);
+	parent->activity = sc->activity;
+	SET_ALL_TIMERS(sc, sc->activity);
+
+out:
+	free(packet);
+	return -1;
+
+}
+
+int
+reply_cancel(struct sipconn *sc)
+{
+	char buf[512], buf2[512];
+	struct parsed *packet, *from;
+	struct sipdata *sd;
+	struct sipconn *parent = sc->parent;
+	socklen_t sslen;
+	int len;
+	
+	if (parent == NULL)
+		return -1;
+
+	from = SLIST_FIRST(&sc->packets);
+	if (from == NULL)
+		return -1;
+
+	sd = SLIST_FIRST(&from->data);
+	if (sd == NULL)
+		return -1;
+
+	packet = (struct parsed *)calloc(1, sizeof(struct parsed));		
+	if (packet == NULL) {
+		perror("calloc");
+		return (-1);
+	}
+
+	packet->id = (uint64_t)arc4random();
+	SLIST_INIT(&packet->data);
+
+
+	add_header(packet, "SIP/2.0", " CANCEL 404 ", SIP_HEAD_STATUS);
+
+	mybase64_encode((char *)packet->id, 8, buf2, sizeof(buf2));
+	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
+		sc->laddress, buf2);
+
+	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
+	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
+		goto out;
+
+	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+
+	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
+		sc->laddress, packet->id);
+
+	add_header(packet, "From:", buf, SIP_HEAD_FROM);
+
+	snprintf(buf, sizeof(buf), " %llX@%s\r\n", packet->id, sc->laddress); 
+	add_header(packet, "Call-ID:", buf, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
+		goto out;
+	}
+	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+
+	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
+	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
+
+	add_header(packet, "Content-Type:", " application/sdp\r\n", 
+		SIP_HEAD_CONTENTTYPE);
+
+	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
+
+	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	if (len < 0) {
+		goto out;
+	}
+	
+	sslen = (parent->remote.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+	if (sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen) < 0) {
+		goto out;
+	}
 
 	sc->activity = time(NULL);
 	parent->activity = sc->activity;
@@ -1515,11 +1758,3 @@ out:
 	return -1;
 
 }
-
-#if 0
-int
-reply_cancel(struct sipconn *sc)
-{
-
-}
-#endif
