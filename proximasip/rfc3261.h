@@ -111,7 +111,7 @@ struct {
 struct {
 	int	statuscode;
 	char 	*statuscode_s;
-	char 	*class;
+	int	class;
 	char	*message;
 } statuscodes[] = {
 	{100, "100",  INFORMATIONAL,  	"Trying"},
@@ -119,7 +119,7 @@ struct {
 	{181, "181",  INFORMATIONAL,  	"Call Is Being Forwarded"},
 	{182, "182",  INFORMATIONAL,  	"Queued"},
 	{183, "183",  INFORMATIONAL,  	"Session Progress"},
-	{200, "200",  SUCCESS  		"OK"},
+	{200, "200",  SUCCESS, 		"OK"},
 	{300, "300",  REDIRECTION,  	"Multiple Choices"},
 	{301, "301",  REDIRECTION,  	"Moved Permanently"},
 	{302, "302",  REDIRECTION,  	"Moved Temporarily"},
@@ -164,7 +164,7 @@ struct {
 	{603, "603",  GLOBALFAILURE, 	"Decline"},
 	{604, "604",  GLOBALFAILURE, 	"Does not exist anywhere"},
 	{606, "606",  GLOBALFAILURE, 	"Not Acceptable"},
-	{-1, NULL, NULL, NULL }
+	{-1, NULL, -1, NULL }
 };
 
 #endif /* _RFC3261_H */

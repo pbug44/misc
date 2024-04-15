@@ -59,12 +59,14 @@
 #include <ctype.h>
 
 #include "sip.h"
+#include "rfc3261.h"
 
 #define PROXIMASIP_USER		"_proximasip"
 #define DEFAULT_AVMBOX		"192.168.199.12"
 #define MAX_BUFSZ		65535
 #define LISTENPORT		12345
 #define TIMEOUT			10
+#define MIN_HEADERS		5	/* STATUS, From, To, Via, Call-ID */
 
 #define NO_BIND			0
 #define BIND_PORT_EXT		1
@@ -173,6 +175,7 @@ void proc_icmp(struct cfg *);
 void proc_icmp6(struct cfg *);
 void icmp_func(struct cfg *, struct sipconn *, char *, int, int);
 void icmp6_func(struct cfg *, struct sipconn *, char *, int, int);
+int check_rfc3261(struct sipconn *, int *);
 
 
 int sip_compact = 0;
@@ -497,13 +500,18 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 {
 	struct sipconn *sc0, *sc1; 
 	struct parsed *packets;
-	int len;
+	int len, siperr;
 
 	sc->activity = time(NULL);
 
 	if (parse_payload(sc) < 0) {
 		fprintf(stderr, "parse_payload failure, skip\n");
 		return;
+	}
+
+	if (check_rfc3261(sc, &siperr) < 0) {
+		syslog(LOG_INFO, "not a SIP packet, or format error %d from %s\n", siperr, sc->address);
+		goto out;
 	}
 
 	len = new_payload(sc);
@@ -519,18 +527,17 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 			 than 1 connection from remote
 		 */
 		
-		if (send(sc1->so, sc->inbuf, len, 0)) {
+		if (send(sc1->so, sc->inbuf, len, 0) < 0) {
 			perror("write");
 		}
 
 		break;
 	}
 
-	
+out:
 	packets = SLIST_FIRST(&sc->packets);
 	if (packets != NULL)
 		destroy_payload(packets);
-
 
 }
 
@@ -1255,4 +1262,28 @@ icmp6_func(struct cfg *cfg, struct sipconn *sc, char *buf, int len, int type)
 				"timex", icmp6.icmp6_code);
 
 	delete_sc(cfg, sc);
+}
+
+int
+check_rfc3261(struct sipconn *sc, int *siperr)
+{
+	struct parsed *parser;
+	struct sipdata *n1;
+	int fieldcount = 0;
+
+	*siperr = -1;			
+	parser = SLIST_FIRST(&sc->packets);
+	if (parser == NULL)
+		return -1;
+
+	SLIST_FOREACH(n1, &parser->data, entries) {
+		printf("%s", n1->fields);
+		fieldcount++;
+	}
+
+	if (fieldcount < MIN_HEADERS) {
+		return -1;
+	}
+
+	return 0;
 }
