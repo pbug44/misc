@@ -497,7 +497,6 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 {
 	struct sipconn *sc0, *sc1; 
 	struct parsed *packets;
-	socklen_t sslen;
 	int len;
 
 	sc->activity = time(NULL);
@@ -520,12 +519,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 			 than 1 connection from remote
 		 */
 		
-		if (sc1->remote.ss_family == AF_INET6)
-			sslen = sizeof(struct sockaddr_in6);
-		else
-			sslen = sizeof(struct sockaddr_in);
-
-		if (sendto(sc1->so, sc->inbuf, len, 0, (struct sockaddr*)&sc1->remote, sslen) < 0) {
+		if (send(sc1->so, sc->inbuf, len, 0)) {
 			perror("write");
 		}
 
