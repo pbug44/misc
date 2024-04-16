@@ -285,12 +285,13 @@ void icmp_func(struct cfg *, struct sipconn *, char *, int, int);
 void icmp6_func(struct cfg *, struct sipconn *, char *, int, int);
 int check_rfc3261(struct sipconn *, int *);
 int reply_trying(struct cfg *, struct sipconn *);
-int reply_cancel(struct sipconn *);
+int reply_4xx(struct sipconn *, int);
 int reply_internal_error(struct cfg *, struct sipconn *);
 struct sipconn * try_proxy(struct cfg *, struct sipconn *);
 struct sipconn * copy_sc(struct cfg *, struct sipconn *);
 u_char * calculate_ha1(struct cfg *, int, int *);
 int reply_proxy_authenticate(struct cfg *, struct sipconn *);
+char * statuscode_s(int);
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
 extern int mybase64_decode(char const *, u_char *, size_t);
@@ -682,7 +683,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 				goto out;
 			} else if (sc->internal && sc->auth) {
 				/* we're not a outgoing proxy so rip it dunn */
-				reply_cancel(sc);
+				reply_4xx(sc, 404);
 				goto terminate;
 			} else {
 				if ((sc_c = try_proxy(cfg, sc)) == NULL) {
@@ -694,8 +695,12 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 				reply_trying(cfg, sc_c);
 				sc->state = STATE_PROCEEDING;
 			}
-		} else if (sc->method == METHOD_OPTIONS) {
-			/* do something with options here */
+		} else if (sc->method == METHOD_REGISTER) {
+			if (sc->internal) {
+			} else {
+				/* we're getting a REGISTER from outside */
+				reply_4xx(sc, 403);	/* forbidden */
+			}
 		} else {
 			/* reply some negative num? */
 			reply_internal_error(cfg, sc);
@@ -708,7 +713,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 				reply_proxy_authenticate(cfg, sc);
 				goto out;
 			} else if (sc->internal && sc->auth) {
-				reply_cancel(sc);
+				reply_4xx(sc, 404);
 				goto terminate;
 			} else {
 				/* we are entirely external */
@@ -1867,11 +1872,11 @@ out:
 }
 
 /*
- * reply a 404 (Not found) error 
+ * reply a 4xx error 
  */
 
 int
-reply_cancel(struct sipconn *sc)
+reply_4xx(struct sipconn *sc, int code)
 {
 	char buf[512];
 	struct parsed *packet, *from;
@@ -1901,7 +1906,8 @@ reply_cancel(struct sipconn *sc)
 	SLIST_INIT(&packet->data);
 
 
-	add_header(packet, "SIP/2.0", " 404 Not Found", SIP_HEAD_STATUS);
+	snprintf(buf, sizeof(buf), " %d %s", code, statuscode_s(code));
+	add_header(packet, "SIP/2.0", buf, SIP_HEAD_STATUS);
 
 	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s", sc->laddress);
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
@@ -2116,4 +2122,17 @@ calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
 	}
 
 	return (ha1);
+}
+
+char *
+statuscode_s(int code)
+{
+	struct statusc *sc = statuscodes;
+
+	for (; sc->statuscode != -1; sc++) {
+		if (sc->statuscode == code)
+			return (sc->message);
+	}
+
+	return ("unknown");
 }

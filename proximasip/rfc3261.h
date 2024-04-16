@@ -128,7 +128,7 @@ struct {
 #define SERVERERROR		5
 #define GLOBALFAILURE		6
 
-struct {
+struct statusc {
 	int	statuscode;
 	char 	*statuscode_s;
 	int	class;
