@@ -325,8 +325,13 @@ main(int argc, char *argv[])
 
 	memset((char *)&cfg, 0, sizeof(cfg));
 	
-	cfg.a = DEFAULT_AVMBOX;
-	cfg.u = DEFAULT_USER;
+	cfg.a = strdup(DEFAULT_AVMBOX);
+	cfg.u = strdup(DEFAULT_USER);
+	
+	if ((cfg.a == NULL) || (cfg.u == NULL)) {
+		perror("strdup");
+		exit(1);
+	}
 
 #ifdef DEFAULT_PASS
 	cfg.p = DEFAULT_PASS;
@@ -380,9 +385,9 @@ main(int argc, char *argv[])
 		}
 	}
 
-	for (alg = ALG_MD5; alg < ALG_SHA5; alg++) {
-		cfg.ha[alg].ha1 = calculate_ha1(cfg.u,cfg.p,cfg.mydomain,alg,\
-			&cfg.ha[alg].ha1_len);
+	for (alg = ALG_MD5; alg <= ALG_SHA2; alg++) {
+		cfg.ha[alg].ha1 = calculate_ha1((char *)&cfg.u, (char *)&cfg.p,\
+			(char *)&cfg.mydomain, alg, &cfg.ha[alg].ha1_len);
 
 		if (cfg.ha[alg].ha1 == NULL) {
 			perror("ha1 failure");
