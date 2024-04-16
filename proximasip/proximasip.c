@@ -385,6 +385,22 @@ main(int argc, char *argv[])
 		}
 	}
 
+	/* get hosts fqdn name */
+	if (gethostname((char *)&myname, sizeof(myname)) == -1) {
+		fprintf(stderr, "no hostname found, setting to localhost\n");
+		snprintf(myname, sizeof(myname), "localhost");
+	}
+
+	cfg.myname = strdup(myname);
+	if (cfg.myname == NULL) {
+		perror("strdup");
+		exit(1);
+	}
+
+	cfg.mydomain = strchr(myname, '.');
+	if (cfg.mydomain == NULL)
+		cfg.mydomain = myname;
+
 	for (alg = ALG_MD5; alg <= ALG_SHA2; alg++) {
 		cfg.ha[alg].ha1 = calculate_ha1((char *)&cfg.u, (char *)&cfg.p,\
 			(char *)&cfg.mydomain, alg, &cfg.ha[alg].ha1_len);
@@ -418,21 +434,6 @@ main(int argc, char *argv[])
 		cfg.icmp6 = -1;
 	}
 
-	/* get hosts fqdn name */
-	if (gethostname((char *)&myname, sizeof(myname)) == -1) {
-		fprintf(stderr, "no hostname found, setting to localhost\n");
-		snprintf(myname, sizeof(myname), "localhost");
-	}
-
-	cfg.myname = strdup(myname);
-	if (cfg.myname == NULL) {
-		perror("strdup");
-		exit(1);
-	}
-
-	cfg.mydomain = strchr(myname, '.');
-	if (cfg.mydomain == NULL)
-		cfg.mydomain = myname;
 
 	SLIST_INIT(&cfg.connection);
 
