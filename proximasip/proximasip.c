@@ -1835,7 +1835,7 @@ calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
 		SHA256_Init(&sha256);
 		SHA256_Update(&sha256, cfg->u, strlen(cfg->u));
 		SHA256_Update(&sha256, ":", 1);
-		SHA256_Update(&sha256, cfg->p, strlen(cfg->u));
+		SHA256_Update(&sha256, cfg->p, strlen(cfg->p));
 		SHA256_Update(&sha256, ":", 1);
 		SHA256_Update(&sha256, cfg->mydomain, strlen(cfg->mydomain));
 		SHA256_Final(ha1, &sha256);
@@ -1845,7 +1845,7 @@ calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
 		MD5_Init(&md5);
 		MD5_Update(&md5, cfg->u, strlen(cfg->u));
 		MD5_Update(&md5, ":", 1);
-		MD5_Update(&md5, cfg->p, strlen(cfg->u));
+		MD5_Update(&md5, cfg->p, strlen(cfg->p));
 		MD5_Update(&md5, ":", 1);
 		MD5_Update(&md5, cfg->mydomain, strlen(cfg->mydomain));
 		MD5_Final(ha1, &md5);
@@ -1856,6 +1856,6 @@ calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
 		return NULL;
 		break;
 	}
-	
+
 	return (ha1);
 }
