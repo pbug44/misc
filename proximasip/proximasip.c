@@ -58,6 +58,10 @@
 
 #include <ctype.h>
 
+#include <openssl/evp.h>
+#include <openssl/sha.h>
+#include <openssl/md5.h>
+
 #include "sip.h"
 #include "rfc3261.h"
 
@@ -200,6 +204,34 @@ struct sipconn {
 	char *outbuf;
 	int outbuflen;
 
+	/* DIGEST functions as per RFC 7235 (obsoletes RFC 2617) */
+
+	/* also see RFC 7616 for SHA-256 */
+
+	uint8_t	alg;			/* the algorithm used */
+
+#define ALG_MD5		0		/* "MD5" */
+#define ALG_SHA2	1		/* "SHA-256" */
+#define ALG_SHA5	2		/* "SHA-512-256" */
+
+	char *ha1;			/* username|":"|realm|":"|password */
+	int ha1_len;			/* length of ha1 hash */
+
+	char nonce[128];		/* full 128 bytes */
+	uint64_t noncecount;		/* starting at 1 */
+
+	char *proxy_nonce;		/* may be base64 */
+	char proxy_nonce_len;		/* proxy nonce len */
+
+	char *cnonce;			/* client nonce */
+	int cnonce_len;			/* client nonce len */	
+
+	char *opaque;			/* some value */
+	int opaque_len;
+
+	char *ha2;			/* ha1|":"|nonce|":"|cnonce all hex */
+	int ha2_len;			/* length of ha2 hash */
+
 	SLIST_HEAD(,parsed) packets;
 	SLIST_ENTRY(sipconn) entries;
 
@@ -211,7 +243,12 @@ struct cfg {
 	char *mydomain;
 
 	char *u;		/* username */
-	char *p;		/* password */
+	u_char *p;		/* password */
+
+	struct {
+		char *ha1;
+		int ha1_len;
+	} ha[2];
 
 	char *a;		/* internal hostname usually DEFAULT_AVMBOX */
 
@@ -245,6 +282,8 @@ int check_rfc3261(struct sipconn *, int *);
 int reply_trying(struct cfg *, struct sipconn *);
 struct sipconn * try_proxy(struct cfg *, struct sipconn *);
 struct sipconn * copy_sc(struct cfg *, struct sipconn *);
+u_char * calculate_ha1(struct cfg *cfg, int alg, int *ha1_len);
+
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
 extern int mybase64_decode(char const *, u_char *, size_t);
@@ -260,7 +299,7 @@ main(int argc, char *argv[])
 	fd_set rset;
 
 	int debug = 0;
-	int ch;
+	int ch, alg;
 	int sel;
 	int no_icmp = 0;
 
@@ -281,7 +320,7 @@ main(int argc, char *argv[])
 			break;
 		case 'a':
 			cfg.a = strdup(optarg);
-			if (cfg.p == NULL) {
+			if (cfg.a == NULL) {
 				fprintf(stderr, "strdup: %s\n", strerror(errno));
 				exit(1);
 			}
@@ -293,31 +332,39 @@ main(int argc, char *argv[])
 			break;
 
 		case 'p':
-			if (strncmp(optarg, "$2b$", 4) != 0) {
-				fprintf(stderr, "no valid password set\n");
-				exit(1);
-			}
 			cfg.p = strdup(optarg);
 			if (cfg.p == NULL) {
-				fprintf(stderr, "strdup: %s\n", strerror(errno));
+				fprintf(stderr, "password\n");
 				exit(1);
 			}
 			break;
-
 		case 'u':
 			cfg.u = strdup(optarg);
-			if (cfg.p == NULL) {
+			if (cfg.u == NULL) {
 				fprintf(stderr, "strdup: %s\n", strerror(errno));
 				exit(1);
 			}
 			break;
-
-		
 		default:
 			fprintf(stderr, "usage: proximasip [-d]\n");
 			exit (1);
 		}
 	}
+
+	for (alg = ALG_MD5; alg < ALG_SHA5; alg++) {
+		cfg.ha[alg].ha1 = calculate_ha1(&cfg,alg,&cfg.ha[alg].ha1_len);
+		if (cfg.ha[alg].ha1 == NULL) {
+			perror("ha1 failure");
+			exit(1);
+		}
+	}
+
+	/* clean ourselves up */
+	explicit_bzero(&cfg.p, strlen(cfg.p));
+	explicit_bzero(&cfg.u, strlen(cfg.u));
+
+	/* cloak the arguments */
+	setproctitle("cloaked");
 
 	if (! no_icmp) {
 		/* set up the icmp socket early */
@@ -345,6 +392,10 @@ main(int argc, char *argv[])
 	if (cfg.myname == NULL) {
 		exit(2);
 	}
+
+	cfg.mydomain = strchr(myname, '.');
+	if (cfg.mydomain == NULL)
+		cfg.mydomain = myname;
 
 	SLIST_INIT(&cfg.connection);
 
@@ -1757,4 +1808,54 @@ out:
 	free(packet);
 	return -1;
 
+}
+
+
+/*
+ * CALCULATE HA1 - creates H(username|":"|realm|":"|password)
+ */
+
+u_char *
+calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
+{
+	SHA256_CTX sha256;
+	MD5_CTX md5;
+	u_char *ha1;
+
+	/* SHA512 not supported */
+	if (alg == ALG_SHA5)
+		return NULL;
+
+	ha1 = malloc_conceal(128);
+	if (ha1 == NULL)
+		return NULL;
+
+	switch (alg) {
+	case ALG_SHA2:
+		SHA256_Init(&sha256);
+		SHA256_Update(&sha256, cfg->u, strlen(cfg->u));
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, cfg->p, strlen(cfg->u));
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, cfg->mydomain, strlen(cfg->mydomain));
+		SHA256_Final(ha1, &sha256);
+		*ha1_len = (256 / 8);
+		break;
+	case ALG_MD5:
+		MD5_Init(&md5);
+		MD5_Update(&md5, cfg->u, strlen(cfg->u));
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, cfg->p, strlen(cfg->u));
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, cfg->mydomain, strlen(cfg->mydomain));
+		MD5_Final(ha1, &md5);
+		*ha1_len = 16;
+		break;
+	default:
+		free(ha1);
+		return NULL;
+		break;
+	}
+	
+	return (ha1);
 }
