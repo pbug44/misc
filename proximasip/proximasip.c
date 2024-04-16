@@ -285,6 +285,8 @@ void icmp_func(struct cfg *, struct sipconn *, char *, int, int);
 void icmp6_func(struct cfg *, struct sipconn *, char *, int, int);
 int check_rfc3261(struct sipconn *, int *);
 int reply_trying(struct cfg *, struct sipconn *);
+int reply_cancel(struct sipconn *);
+int reply_internal_error(struct cfg *, struct sipconn *);
 struct sipconn * try_proxy(struct cfg *, struct sipconn *);
 struct sipconn * copy_sc(struct cfg *, struct sipconn *);
 u_char * calculate_ha1(struct cfg *, int, int *);
@@ -660,7 +662,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 
 	if (check_rfc3261(sc, &siperr) < 0) {
 		syslog(LOG_INFO, "not a SIP packet, or format error %d from %s\n", siperr, sc->address);
-		goto out;
+		goto terminate;
 	}
 
 	packets = SLIST_FIRST(&sc->packets);
@@ -672,23 +674,6 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		return;
 	}
 
-#if 0
-	SLIST_FOREACH_SAFE(sc1, &cfg->connection, entries, sc0) {
-		if ((sc1->state != STATE_LISTEN) || !(sc1->internal))
-			continue;
-
-		/* XXX we haven't done the parsing here, there could be more
-			 than 1 connection from remote
-		 */
-		
-		if (send(sc1->so, sc->inbuf, len, 0) < 0) {
-			perror("write");
-		}
-
-		break;
-	}
-#endif
-
 	switch (sc->state) {
 	case STATE_TRYING:
 		if (sc->method == METHOD_INVITE) {
@@ -697,20 +682,24 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 				goto out;
 			} else if (sc->internal && sc->auth) {
 				/* we're not a outgoing proxy so rip it dunn */
-				//reply_cancel(cfg, sc);
+				reply_cancel(sc);
+				goto terminate;
 			} else {
-				reply_trying(cfg, sc_c);
-				sc->state = STATE_PROCEEDING;
-
 				if ((sc_c = try_proxy(cfg, sc)) == NULL) {
 					/* tear it all down, if this fails */
-					//reply_cancel(cfg, sc);
+					reply_internal_error(cfg, sc);
+					goto terminate;
 				} 
+
+				reply_trying(cfg, sc_c);
+				sc->state = STATE_PROCEEDING;
 			}
 		} else if (sc->method == METHOD_OPTIONS) {
 			/* do something with options here */
 		} else {
 			/* reply some negative num? */
+			reply_internal_error(cfg, sc);
+			goto terminate;
 		}
 		break;
 	case STATE_PROCEEDING:
@@ -719,9 +708,19 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 				reply_proxy_authenticate(cfg, sc);
 				goto out;
 			} else if (sc->internal && sc->auth) {
-				// forward reply from UAC
-				//reply_cancel(cfg, sc);
-			} 
+				reply_cancel(sc);
+				goto terminate;
+			} else {
+				/* we are entirely external */
+
+				/* this is likely a resend for an INVITE */
+				/* XXX tear it down for now */
+				reply_internal_error(cfg, sc);
+				goto terminate;
+			}
+		} else {
+			/* shut 'er down */
+			goto terminate;
 		}
 		break;
 	case STATE_COMPLETED:
@@ -732,6 +731,11 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 	default:
 		break;
 	}
+
+	goto out;
+
+terminate:
+	sc->state = STATE_TERMINATED;
 
 out:
 	packets = SLIST_FIRST(&sc->packets);
@@ -1775,10 +1779,14 @@ out:
 
 }
 
+/*
+ * reply a 5xx (500) code 
+ */
+
 int
-reply_cancel(struct sipconn *sc)
+reply_internal_error(struct cfg *cfg, struct sipconn *sc)
 {
-	char buf[512], buf2[512];
+	char buf[512];
 	struct parsed *packet, *from;
 	struct sipdata *sd;
 	struct sipconn *parent = sc->parent;
@@ -1806,36 +1814,122 @@ reply_cancel(struct sipconn *sc)
 	SLIST_INIT(&packet->data);
 
 
-	add_header(packet, "SIP/2.0", " CANCEL 404 ", SIP_HEAD_STATUS);
+	add_header(packet, "SIP/2.0", " 500 Server Internal Error", SIP_HEAD_STATUS);
 
-	mybase64_encode((char *)packet->id, 8, buf2, sizeof(buf2));
-	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
-		sc->laddress, buf2);
-
+	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s", sc->laddress);
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
+
 	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
 		goto out;
-
 	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
 
-	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
-		sc->laddress, packet->id);
-
-	add_header(packet, "From:", buf, SIP_HEAD_FROM);
-
-	snprintf(buf, sizeof(buf), " %llX@%s\r\n", packet->id, sc->laddress); 
-	add_header(packet, "Call-ID:", buf, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
+	if ((sd = find_header(from, SIP_HEAD_TO)) == NULL)
 		goto out;
-	}
+	add_header(packet, "From:", sd->fields, SIP_HEAD_FROM);
+
+	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
+		goto out;
+	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL)
+		goto out;
 	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
 
-	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
-	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
+	if ((sd = find_header(from, SIP_HEAD_CONTACT)) == NULL)
+		goto out;
+	add_header(packet, "Contact:", sd->fields, SIP_HEAD_CONTACT);
 
+#if 0
 	add_header(packet, "Content-Type:", " application/sdp\r\n", 
 		SIP_HEAD_CONTENTTYPE);
+#endif
+
+	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
+
+	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	if (len < 0) {
+		goto out;
+	}
+	
+	sslen = (parent->remote.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+	if (sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen) < 0) {
+		goto out;
+	}
+
+	sc->activity = time(NULL);
+	parent->activity = sc->activity;
+
+out:
+	free(packet);
+	return -1;
+
+}
+
+/*
+ * reply a 404 (Not found) error 
+ */
+
+int
+reply_cancel(struct sipconn *sc)
+{
+	char buf[512];
+	struct parsed *packet, *from;
+	struct sipdata *sd;
+	struct sipconn *parent = sc->parent;
+	socklen_t sslen;
+	int len;
+	
+	if (parent == NULL)
+		return -1;
+
+	from = SLIST_FIRST(&sc->packets);
+	if (from == NULL)
+		return -1;
+
+	sd = SLIST_FIRST(&from->data);
+	if (sd == NULL)
+		return -1;
+
+	packet = (struct parsed *)calloc(1, sizeof(struct parsed));		
+	if (packet == NULL) {
+		perror("calloc");
+		return (-1);
+	}
+
+	packet->id = (uint64_t)arc4random();
+	SLIST_INIT(&packet->data);
+
+
+	add_header(packet, "SIP/2.0", " 404 Not Found", SIP_HEAD_STATUS);
+
+	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s", sc->laddress);
+	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
+
+	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
+		goto out;
+	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+
+	if ((sd = find_header(from, SIP_HEAD_TO)) == NULL)
+		goto out;
+	add_header(packet, "From:", sd->fields, SIP_HEAD_FROM);
+
+	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
+		goto out;
+	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL)
+		goto out;
+	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+
+	if ((sd = find_header(from, SIP_HEAD_CONTACT)) == NULL)
+		goto out;
+	add_header(packet, "Contact:", sd->fields, SIP_HEAD_CONTACT);
+
+#if 0
+	add_header(packet, "Content-Type:", " application/sdp\r\n", 
+		SIP_HEAD_CONTENTTYPE);
+#endif
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
