@@ -339,7 +339,7 @@ main(int argc, char *argv[])
 	arc4random_buf(myname, sizeof(myname));
 	mybase64_encode(myname, 16, buf, 64);
 	cfg.p = buf;
-	explicit_bzero(&myname, sizeof(myname));
+	explicit_bzero((char *)&myname, sizeof(myname));
 #endif
 
 	while ((ch = getopt(argc, argv, "Ia:du:p:")) != -1) {
@@ -414,14 +414,15 @@ main(int argc, char *argv[])
 	}
 
 	/* get hosts fqdn name */
-	if (gethostname(myname, sizeof(myname)) == -1) {
-		syslog(LOG_ERR, "no hostname found, setting to localhost");
+	if (gethostname((char *)&myname, sizeof(myname)) == -1) {
+		fprintf(stderr, "no hostname found, setting to localhost\n");
 		snprintf(myname, sizeof(myname), "localhost");
 	}
 
 	cfg.myname = strdup(myname);
 	if (cfg.myname == NULL) {
-		exit(2);
+		perror("strdup");
+		exit(1);
 	}
 
 	cfg.mydomain = strchr(myname, '.');
