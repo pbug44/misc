@@ -214,28 +214,30 @@ struct sipconn {
 	/* also see RFC 7616 for SHA-256 */
 
 	uint8_t	alg;			/* the algorithm used */
+	int qop;
 
 #define ALG_MD5		0		/* "MD5" */
 #define ALG_SHA2	1		/* "SHA-256" */
 #define ALG_SHA5	2		/* "SHA-512-256" */
 
 	char *ha1;			/* username|":"|realm|":"|password */
-	int ha1_len;			/* length of ha1 hash */
+	size_t ha1_len;			/* length of ha1 hash */
 
-	char nonce[32];			/* full 32 bytes */
+	char *nonce;			/* nonce */
+	size_t nonce_len;
 
-	uint64_t noncecount;		/* starting at 1 */
+	uint64_t nc;			/* starting at 1 */
 	char *cnonce;			/* client nonce */
-	int cnonce_len;			/* client nonce len */	
+	size_t cnonce_len;		/* client nonce len */	
 
 	char *opaque;			/* some value */
-	int opaque_len;
+	size_t opaque_len;
 
 #define BUF_NONCE	0
 #define BUF_OPAQUE	1
 
 	char *ha2;			/* ha1|":"|nonce|":"|cnonce all hex */
-	int ha2_len;			/* length of ha2 hash */
+	size_t ha2_len;			/* length of ha2 hash */
 
 	SLIST_HEAD(,parsed) packets;
 	SLIST_ENTRY(sipconn) entries;
@@ -252,7 +254,7 @@ struct cfg {
 
 	struct {
 		char *ha1;
-		int ha1_len;
+		size_t ha1_len;
 	} ha[2];
 
 	char *a;		/* internal hostname usually DEFAULT_AVMBOX */
@@ -289,8 +291,10 @@ int reply_4xx(struct sipconn *, int);
 int reply_internal_error(struct cfg *, struct sipconn *);
 struct sipconn * try_proxy(struct cfg *, struct sipconn *);
 struct sipconn * copy_sc(struct cfg *, struct sipconn *);
-u_char * calculate_ha1(struct cfg *, int, int *);
+u_char * calculate_ha1(char *, char *, char *, int, size_t *);
+u_char * calculate_ha2(char *, int, char *, size_t *);
 int reply_proxy_authenticate(struct cfg *, struct sipconn *);
+struct sipconn * authenticate(struct cfg *, struct sipconn *);
 char * statuscode_s(int);
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
@@ -360,7 +364,9 @@ main(int argc, char *argv[])
 	}
 
 	for (alg = ALG_MD5; alg < ALG_SHA5; alg++) {
-		cfg.ha[alg].ha1 = calculate_ha1(&cfg,alg,&cfg.ha[alg].ha1_len);
+		cfg.ha[alg].ha1 = calculate_ha1(cfg.u,cfg.p,cfg.mydomain,alg,\
+			&cfg.ha[alg].ha1_len);
+
 		if (cfg.ha[alg].ha1 == NULL) {
 			perror("ha1 failure");
 			exit(1);
@@ -697,9 +703,12 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 			}
 		} else if (sc->method == METHOD_REGISTER) {
 			if (sc->internal) {
+				authenticate(cfg, sc);
+				goto out;
 			} else {
 				/* we're getting a REGISTER from outside */
 				reply_4xx(sc, 403);	/* forbidden */
+				goto terminate;
 			}
 		} else {
 			/* reply some negative num? */
@@ -1778,6 +1787,9 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 	parent->activity = sc->activity;
 	SET_ALL_TIMERS(sc, sc->activity);
 
+	free(packet);
+	return 0;
+
 out:
 	free(packet);
 	return -1;
@@ -1865,6 +1877,8 @@ reply_internal_error(struct cfg *cfg, struct sipconn *sc)
 	sc->activity = time(NULL);
 	parent->activity = sc->activity;
 
+	free(packet);
+	return 0;
 out:
 	free(packet);
 	return -1;
@@ -2023,8 +2037,11 @@ reply_proxy_authenticate(struct cfg *cfg, struct sipconn *sc)
 			goto out;
 	}
 
-	arc4random_buf(sc->nonce, sizeof(sc->nonce));
-	mybase64_encode((char *)sc->nonce, sizeof(sc->nonce), sbuf[BUF_NONCE], 64);
+	sc->nonce = calloc_conceal(1, 32);
+	if (sc->nonce == NULL)
+		goto out;
+	arc4random_buf(sc->nonce, 32);
+	mybase64_encode((char *)sc->nonce, 32, sbuf[BUF_NONCE], 64);
 	if (sc->opaque == NULL) {
 		sc->opaque = malloc_conceal(32);
 		if (sc->opaque == NULL) {
@@ -2069,6 +2086,8 @@ reply_proxy_authenticate(struct cfg *cfg, struct sipconn *sc)
 	sc->activity = time(NULL);
 	parent->activity = sc->activity;
 
+	free(packet);
+	return 0;
 out:
 	free(packet);
 	return -1;
@@ -2080,7 +2099,7 @@ out:
  */
 
 u_char *
-calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
+calculate_ha1(char *u, char *p, char *domain, int alg, size_t *ha1_len)
 {
 	SHA256_CTX sha256;
 	MD5_CTX md5;
@@ -2097,21 +2116,21 @@ calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
 	switch (alg) {
 	case ALG_SHA2:
 		SHA256_Init(&sha256);
-		SHA256_Update(&sha256, cfg->u, strlen(cfg->u));
+		SHA256_Update(&sha256, u, strlen(u));
 		SHA256_Update(&sha256, ":", 1);
-		SHA256_Update(&sha256, cfg->p, strlen(cfg->p));
+		SHA256_Update(&sha256, p, strlen(p));
 		SHA256_Update(&sha256, ":", 1);
-		SHA256_Update(&sha256, cfg->mydomain, strlen(cfg->mydomain));
+		SHA256_Update(&sha256, domain, strlen(domain));
 		SHA256_Final(ha1, &sha256);
 		*ha1_len = (256 / 8);
 		break;
 	case ALG_MD5:
 		MD5_Init(&md5);
-		MD5_Update(&md5, cfg->u, strlen(cfg->u));
+		MD5_Update(&md5, u, strlen(u));
 		MD5_Update(&md5, ":", 1);
-		MD5_Update(&md5, cfg->p, strlen(cfg->p));
+		MD5_Update(&md5, p, strlen(p));
 		MD5_Update(&md5, ":", 1);
-		MD5_Update(&md5, cfg->mydomain, strlen(cfg->mydomain));
+		MD5_Update(&md5, domain, strlen(domain));
 		MD5_Final(ha1, &md5);
 		*ha1_len = 16;
 		break;
@@ -2121,8 +2140,338 @@ calculate_ha1(struct cfg *cfg, int alg, int *ha1_len)
 		break;
 	}
 
+	explicit_bzero(&sha256, sizeof(sha256));
+	explicit_bzero(&md5, sizeof(md5));
+
 	return (ha1);
 }
+
+u_char *
+calculate_ha2(char *method, int algorithm, char *requesturi, size_t *ha2_len)
+{
+	SHA256_CTX sha256;
+	MD5_CTX md5;
+	u_char *ha2;
+
+	/* SHA512 not supported */
+	if (algorithm == ALG_SHA5)
+		return NULL;
+
+	ha2 = malloc_conceal(128);
+	if (ha2 == NULL)
+		return NULL;
+
+	switch (algorithm) {
+	case ALG_SHA2:
+		SHA256_Init(&sha256);
+		SHA256_Update(&sha256, method, strlen(method));
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, requesturi, strlen(requesturi));
+		SHA256_Final(ha2, &sha256);
+		*ha2_len = (256 / 8);
+		break;
+	case ALG_MD5:
+		MD5_Init(&md5);
+		MD5_Update(&md5, method, strlen(method));
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, requesturi, strlen(requesturi));
+		MD5_Final(ha2, &md5);
+		*ha2_len = 16;
+		break;
+	default:
+		free(ha2);
+		return NULL;
+		break;
+	}
+
+	explicit_bzero(&sha256, sizeof(sha256));
+	explicit_bzero(&md5, sizeof(md5));
+
+	return (ha2);
+}
+
+struct sipconn *
+authenticate(struct cfg *cfg, struct sipconn *sc)
+{
+	struct parsed *packet, *from;
+	struct sipdata *sd;
+	struct sipconn *newsc, *parent;
+	char buf[512];
+	char *inputstring;
+	char **ap = NULL, *argv[20];
+	char *response;
+	int response_len;
+	int len, i;
+	socklen_t sslen;
+
+	SHA256_CTX sha256;
+	MD5_CTX md5;
+
+	struct {
+		int type;
+		#define TAG_DIGEST		0
+		#define TAG_USERNAME		1
+		#define TAG_REALM		2
+		#define TAG_NONCE		3
+		#define TAG_RESPONSE		4
+		#define TAG_URI			5
+		#define TAG_QOP			6
+		#define TAG_NC			7
+		#define TAG_CNONCE		8
+		#define TAG_ALG			9
+		#define TAG_OPAQUE		10
+		char *tag;
+		char *value;
+		int len;
+	} authtok[] = {
+		{ TAG_DIGEST, "Digest", NULL, 0 },
+		{ TAG_USERNAME, "username=\"", NULL, 0 },
+		{ TAG_REALM, "realm=\"", NULL, 0 },
+		{ TAG_NONCE, "nonce=\"", NULL, 0 },
+		{ TAG_RESPONSE, "response=\"", NULL, 0 },
+		{ TAG_URI, "uri=\"", NULL, 0 },
+		{ TAG_QOP, "qop=", NULL, 0 },
+		{ TAG_NC, "nc=", NULL, 0 },
+		{ TAG_CNONCE, "cnonce=\"", NULL, 0 },
+		{ TAG_ALG, "algorithm=\"", NULL, 0 },
+		{ TAG_OPAQUE, "opaque=\"", NULL, 0 }
+	};
+	
+	from = SLIST_FIRST(&sc->packets);
+	if (from == NULL)
+		return NULL;
+
+	sd = SLIST_FIRST(&from->data);
+	if (sd == NULL)
+		return NULL;
+
+	if ((sd = find_header(from, SIP_HEAD_PROXYAUTHOR)) == NULL)
+		return NULL;
+
+	/* for preservation */
+	inputstring = calloc_conceal(1, sd->fieldlen + 1);
+	if (inputstring == NULL) {
+		syslog(LOG_INFO, "calloc_conceal: %m");
+		return NULL;
+	}
+
+	memcpy(inputstring, sd->fields, sd->fieldlen);
+
+	/* tokenize */
+	for (ap = argv; ap < &argv[19] &&
+		(*ap = strsep(&inputstring, " \t")) != NULL;) {
+			for (i = 0; i < nitems(authtok); i++) {
+				if (strncmp(authtok[i].tag, *ap, \
+					strlen(authtok[i].tag)) == 0) {
+					*ap += strlen(authtok[i].tag);
+					len = strlen(*ap);
+					if (*ap[len - 1] == ',')
+						len--;
+					if (*ap[len - 1] == '"')
+						len--;
+					*ap[len] = '\0';
+
+					authtok[i].value = malloc_conceal(len);
+					if (authtok[i].value == NULL) {
+						syslog(LOG_INFO, "malloc: %m");
+						goto cleantok;
+					}
+
+					strlcpy(authtok[i].value, *ap, len);
+					authtok[i].len = len;
+				}
+			}
+			if (**ap != '\0')
+				ap++;
+	}
+	*ap = NULL;
+	freezero(inputstring, sd->fieldlen + 1);
+	
+	/*
+	 * we don't have a child copy, make one, and work on it further
+	 */
+	if (sc->parent == NULL) {
+		newsc = copy_sc(cfg, sc);
+		if (newsc == NULL)
+			goto cleantok;
+
+		parent = sc;
+		newsc->parent = sc;
+		sc = newsc;
+	}
+
+	if (authtok[TAG_NONCE].len) {
+		sc->nonce_len = authtok[TAG_NONCE].len;
+		sc->nonce = authtok[TAG_NONCE].value;
+	}
+	if (authtok[TAG_CNONCE].len) {
+		sc->cnonce_len = authtok[TAG_CNONCE].len;
+		sc->cnonce = authtok[TAG_CNONCE].value;
+	}
+	if (authtok[TAG_NC].len)
+		sc->nc = strtoull(authtok[TAG_NC].value, NULL, 16);
+
+	if (authtok[TAG_OPAQUE].len) {
+		sc->opaque_len = authtok[TAG_OPAQUE].len;
+		sc->opaque = authtok[TAG_OPAQUE].value;
+	}
+
+	if (authtok[TAG_ALG].len) {
+		sc->alg = ALG_MD5;
+
+		if (strncmp(authtok[TAG_ALG].value, "MD5", 3) == 0)
+			sc->alg = ALG_MD5;
+		if (strncmp(authtok[TAG_ALG].value, "SHA-256", 7) == 0)
+				sc->alg = ALG_SHA2;
+	} else {
+		sc->alg = ALG_SHA2;
+	}
+
+	if (authtok[TAG_QOP].len) {
+		if (strstr(authtok[TAG_QOP].value, "auth-int") == NULL)
+			sc->qop = 0;		/* no integrity, just "auth" */
+		else
+			sc->qop = 1;
+	}
+
+	if (authtok[TAG_URI].len == 0) {
+		goto cleantok;
+	}
+
+	
+	sc->ha2 = calculate_ha2("Digest", sc->alg, authtok[TAG_URI].value, \
+			&sc->ha2_len);
+
+	response = malloc_conceal(128);
+	if (response == NULL)
+		goto cleantok;
+
+	switch (sc->alg) {
+	case ALG_MD5:
+		MD5_Init(&md5);
+		MD5_Update(&md5, sc->ha1, sc->ha1_len);
+		//MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, sc->nonce, sc->nonce_len);
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, authtok[TAG_NC].value, authtok[TAG_NC].len);
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, sc->cnonce, sc->cnonce_len);
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, authtok[TAG_QOP].value,authtok[TAG_QOP].len);
+		MD5_Update(&md5, ":", 1);
+		MD5_Update(&md5, sc->ha2, sc->ha2_len);
+		MD5_Final(response, &md5);
+		response_len = 16;
+
+		break;
+	case ALG_SHA2:
+		SHA256_Init(&sha256);
+		SHA256_Update(&sha256, sc->ha1, sc->ha1_len);
+		//SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, sc->nonce, sc->nonce_len);
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, authtok[TAG_NC].value, authtok[TAG_NC].len);
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, sc->cnonce, sc->cnonce_len);
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, authtok[TAG_QOP].value,authtok[TAG_QOP].len);
+		SHA256_Update(&sha256, ":", 1);
+		SHA256_Update(&sha256, sc->ha2, sc->ha2_len);
+		SHA256_Final(response, &sha256);
+		response_len = (256 / 8);
+
+		break;
+	default:
+		goto cleantok;
+		break;
+	}
+
+	len = mybase64_encode(response, response_len, buf, sizeof(buf));
+	if ((len == authtok[TAG_RESPONSE].len) && \
+		(strcmp(authtok[TAG_RESPONSE].value, buf) == 0)) {
+		sc->auth = 1;
+	} else
+		sc->auth = 0;
+	
+	explicit_bzero(&buf, sizeof(buf));
+	explicit_bzero(&sha256, sizeof(sha256));
+	explicit_bzero(&md5, sizeof(md5));
+
+	freezero(response, 128);
+	
+	packet = (struct parsed *)calloc_conceal(1, sizeof(struct parsed));		
+	if (packet == NULL) {
+		perror("calloc");
+		goto cleantok;
+	}
+
+	packet->id = (uint64_t)arc4random();
+	SLIST_INIT(&packet->data);
+
+	if (sc->auth == 1)
+		add_header(packet, "SIP/2.0", " 200 OK", SIP_HEAD_STATUS);
+
+	/* fill in */
+
+	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
+		sc->laddress, sc->branchid);
+	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
+
+	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
+		goto out;
+	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+
+	if ((sd = find_header(from, SIP_HEAD_TO)) == NULL)
+		goto out;
+	add_header(packet, "From:", sd->fields, SIP_HEAD_FROM);
+
+	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
+		goto out;
+	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
+		goto out;
+	}
+	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+
+	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
+	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
+
+	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
+
+	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	if (len < 0) {
+		goto out;
+	}
+	
+	sslen = (parent->remote.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+	if (sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen) < 0) {
+		goto out;
+	}
+
+	/* XXX use new timers */
+	sc->activity = time(NULL);
+	parent->activity = sc->activity;
+
+out:
+	for (i = 0; i < nitems(authtok); i++) {
+		if (authtok[i].len)
+			freezero(authtok[i].value, authtok[i].len);
+	}
+
+	freezero(packet, sizeof(struct parsed));
+	return (sc);
+
+cleantok:
+	for (i = 0; i < nitems(authtok); i++) {
+		if (authtok[i].len)
+			freezero(authtok[i].value, authtok[i].len);
+	}
+
+	return NULL;
+}
+
 
 char *
 statuscode_s(int code)
