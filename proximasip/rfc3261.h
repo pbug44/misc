@@ -103,19 +103,19 @@ struct {
 struct {
 	char method[16];
 	int meth;
-#define INVITE			1
-#define ACK			2
-#define OPTIONS			3
-#define BYE			4
-#define CANCEL			5
-#define REGISTER		6
+#define METHOD_INVITE		1
+#define METHOD_ACK		2
+#define METHOD_OPTIONS		3
+#define METHOD_BYE		4
+#define METHOD_CANCEL		5
+#define METHOD_REGISTER		6
 } methods[] = {
-	{"INVITE", INVITE},
-	{"ACK", ACK},
-	{"OPTIONS", OPTIONS},
-	{"BYE", BYE},
-	{"CANCEL", CANCEL},
-	{"REGISTER", REGISTER}
+	{"INVITE", METHOD_INVITE},
+	{"ACK", METHOD_ACK},
+	{"OPTIONS", METHOD_OPTIONS},
+	{"BYE", METHOD_BYE},
+	{"CANCEL", METHOD_CANCEL},
+	{"REGISTER", METHOD_REGISTER}
 };
 		
 

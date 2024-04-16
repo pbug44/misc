@@ -82,6 +82,8 @@
 #define STATE_COMPLETED		4
 #define STATE_TERMINATED	5
 
+#define BRANCH_MAGIC		"z9hG4bK"
+
 struct sipdata {
 	uint8_t flags;
 #define SIP_HEAD_FLAG_HEADER	0x1
@@ -120,6 +122,8 @@ struct parsed {
 
 
 struct sipconn {
+	char branchid[32];		/* Via branchid */
+
 	int af;				/* address family */
 	int addrlen;			/* address length */
 
@@ -141,6 +145,7 @@ struct sipconn {
 	int so;				/* socket */
 	int state;			/* state of connection */
 	int auth;			/* authentication flag */
+	int method;			/* last method received */
 
 	time_t connect;			/* first connection time */
 	time_t activity;		/* last activity */
@@ -217,17 +222,17 @@ struct sipconn {
 	char *ha1;			/* username|":"|realm|":"|password */
 	int ha1_len;			/* length of ha1 hash */
 
-	char nonce[128];		/* full 128 bytes */
+	char nonce[32];			/* full 32 bytes */
+
 	uint64_t noncecount;		/* starting at 1 */
-
-	char *proxy_nonce;		/* may be base64 */
-	char proxy_nonce_len;		/* proxy nonce len */
-
 	char *cnonce;			/* client nonce */
 	int cnonce_len;			/* client nonce len */	
 
 	char *opaque;			/* some value */
 	int opaque_len;
+
+#define BUF_NONCE	0
+#define BUF_OPAQUE	1
 
 	char *ha2;			/* ha1|":"|nonce|":"|cnonce all hex */
 	int ha2_len;			/* length of ha2 hash */
@@ -258,7 +263,7 @@ struct cfg {
 	int icmp;		/* icmp socket */
 	int icmp6;		/* icmp6 socket */
 	
-	SLIST_HEAD(, sipconn) connection;
+	SLIST_HEAD(, sipconn) connection;	/* really also a transaction */
 };
 
 /* prototypes */
@@ -282,8 +287,8 @@ int check_rfc3261(struct sipconn *, int *);
 int reply_trying(struct cfg *, struct sipconn *);
 struct sipconn * try_proxy(struct cfg *, struct sipconn *);
 struct sipconn * copy_sc(struct cfg *, struct sipconn *);
-u_char * calculate_ha1(struct cfg *cfg, int alg, int *ha1_len);
-
+u_char * calculate_ha1(struct cfg *, int, int *);
+int reply_proxy_authenticate(struct cfg *, struct sipconn *);
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
 extern int mybase64_decode(char const *, u_char *, size_t);
@@ -686,15 +691,38 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 
 	switch (sc->state) {
 	case STATE_TRYING:
-		if ((sc_c = try_proxy(cfg, sc)) == NULL) {
-			/* tear it all down, if this fails */
-			//reply_cancel(cfg, sc);
+		if (sc->method == METHOD_INVITE) {
+			if (sc->internal && sc->auth == 0) {
+				reply_proxy_authenticate(cfg, sc);
+				goto out;
+			} else if (sc->internal && sc->auth) {
+				/* we're not a outgoing proxy so rip it dunn */
+				//reply_cancel(cfg, sc);
+			} else {
+				reply_trying(cfg, sc_c);
+				sc->state = STATE_PROCEEDING;
+
+				if ((sc_c = try_proxy(cfg, sc)) == NULL) {
+					/* tear it all down, if this fails */
+					//reply_cancel(cfg, sc);
+				} 
+			}
+		} else if (sc->method == METHOD_OPTIONS) {
+			/* do something with options here */
 		} else {
-			reply_trying(cfg, sc_c);
-			sc->state = STATE_PROCEEDING;
+			/* reply some negative num? */
 		}
 		break;
 	case STATE_PROCEEDING:
+		if (sc->method == METHOD_INVITE) {
+			if (sc->internal && sc->auth == 0) {
+				reply_proxy_authenticate(cfg, sc);
+				goto out;
+			} else if (sc->internal && sc->auth) {
+				// forward reply from UAC
+				//reply_cancel(cfg, sc);
+			} 
+		}
 		break;
 	case STATE_COMPLETED:
 		sc->state = STATE_TERMINATED;
@@ -726,7 +754,7 @@ int
 parse_payload(struct sipconn *sc)
 {
 	struct parsed *parser;
-	struct sipdata *n1;
+	struct sipdata *n1, *status;
 	char *nl;
 	int count = 0;
 
@@ -914,6 +942,17 @@ parse_payload(struct sipconn *sc)
 		}
 	}
 
+	status = find_header(parser, SIP_HEAD_STATUS);
+	if (status != NULL) {
+		for (i = 0; i < nitems(methods); i++) {
+			if (strncmp(status->fields, methods[i].method, \
+					strlen(methods[i].method)) == 0) {
+				sc->method = methods[i].meth;
+				break;
+			}
+		}
+	}
+
 	SLIST_INSERT_HEAD(&sc->packets, parser, entries);
 
 	return (0);
@@ -1068,6 +1107,8 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 	struct sockaddr_in6 *psin6;
 	char laddress[INET6_ADDRSTRLEN];
 	socklen_t slen = sizeof(struct sockaddr_storage);
+	char branch[16];
+	char *p;
 	int so, error;
 
 	memset(&hints, 0, sizeof(hints));
@@ -1100,7 +1141,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			goto out;
 		}
 		
-		sc = calloc(1, sizeof(struct sipconn));
+		sc = calloc_conceal(1, sizeof(struct sipconn));
 		if (sc == NULL) {
 			syslog(LOG_INFO, "calloc: %m");
 			goto out;
@@ -1192,6 +1233,13 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			sc->activity = sc->connect = time(NULL);
 			sc->state = STATE_TRYING;
 		}
+
+		arc4random_buf(&branch, sizeof(branch));
+		mybase64_encode(branch, sizeof(branch), sc->branchid, sizeof(sc->branchid));
+		memcpy(sc->branchid, BRANCH_MAGIC, strlen(BRANCH_MAGIC));
+		p = strchr(sc->branchid, '=');
+		if (p != NULL)
+			*p = '\0';
 
 		SLIST_INSERT_HEAD(&cfg->connection, sc, entries);
 		close(so);
@@ -1644,7 +1692,7 @@ try_proxy(struct cfg *cfg, struct sipconn *sc)
 int
 reply_trying(struct cfg *cfg, struct sipconn *sc)
 {
-	char buf[512], buf2[512];
+	char buf[512];
 	struct parsed *packet, *from;
 	struct sipdata *sd;
 	struct sipconn *parent = sc->parent;
@@ -1674,9 +1722,8 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 
 	add_header(packet, "SIP/2.0", " 100 Trying", SIP_HEAD_STATUS);
 
-	mybase64_encode((char *)packet->id, 8, buf2, sizeof(buf2));
 	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
-		sc->laddress, buf2);
+		sc->laddress, sc->branchid);
 
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
 	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
@@ -1684,17 +1731,19 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 
 	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
 
-	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
-		sc->laddress, packet->id);
+	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>\r\n", 
+		sc->laddress);
 
 	add_header(packet, "From:", buf, SIP_HEAD_FROM);
 
-	snprintf(buf, sizeof(buf), " %llX@%s\r\n", packet->id, sc->laddress); 
-	add_header(packet, "Call-ID:", buf, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
+	
+	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL) 
 		goto out;
-	}
+	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL)
+		goto out;
+
 	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
 
 	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
@@ -1810,6 +1859,121 @@ out:
 
 }
 
+int
+reply_proxy_authenticate(struct cfg *cfg, struct sipconn *sc)
+{
+	char buf[512];
+	char *sbuf[2];
+	struct parsed *packet, *from;
+	struct sipdata *sd;
+	struct sipconn *parent = sc->parent;
+	socklen_t sslen;
+	int len, i;
+	
+	if (parent == NULL)
+		return -1;
+
+	from = SLIST_FIRST(&sc->packets);
+	if (from == NULL)
+		return -1;
+
+	sd = SLIST_FIRST(&from->data);
+	if (sd == NULL)
+		return -1;
+
+	packet = (struct parsed *)calloc(1, sizeof(struct parsed));		
+	if (packet == NULL) {
+		perror("calloc");
+		return (-1);
+	}
+
+	packet->id = (uint64_t)arc4random();
+	SLIST_INIT(&packet->data);
+
+	add_header(packet, "SIP/2.0", " 407 Proxy Authentication Required", SIP_HEAD_STATUS);
+
+	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s;branch=%s", 
+		sc->laddress, sc->branchid);
+	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
+
+	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
+		goto out;
+	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+
+	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
+		sc->laddress, packet->id);
+	add_header(packet, "From:", buf, SIP_HEAD_FROM);
+
+	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
+		goto out;
+	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
+
+	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
+		goto out;
+	}
+	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+
+	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
+	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
+
+	/* make some temp bufs */
+	for (i = 0; i < 2; i++) {
+		sbuf[i] = malloc_conceal(64);
+		if (sbuf[i] == NULL)
+			goto out;
+	}
+
+	arc4random_buf(sc->nonce, sizeof(sc->nonce));
+	mybase64_encode((char *)sc->nonce, sizeof(sc->nonce), sbuf[BUF_NONCE], 64);
+	if (sc->opaque == NULL) {
+		sc->opaque = malloc_conceal(32);
+		if (sc->opaque == NULL) {
+			freezero(sbuf[BUF_NONCE], 64);
+			freezero(sbuf[BUF_OPAQUE], 64);
+			goto out;
+		}
+		arc4random_buf(sc->opaque, 32);
+	}
+
+	mybase64_encode((char *)sc->opaque, 32, sbuf[BUF_OPAQUE], 64);
+
+	snprintf(buf, sizeof(buf), " Digest realm=\"%s\" "
+		"domain=\"sip:%s\", qop=\"auth\", nonce=\"%s\", "
+		"opaque=\"%s\", stale=FALSE, algorithm=%s\r\n",
+		cfg->mydomain, cfg->myname, sbuf[BUF_NONCE], sbuf[BUF_OPAQUE],
+		(sc->alg == ALG_MD5) ? "MD5" : "SHA-256");
+
+	/* clean up temp bufs */
+	for (i = 0; i < 2; i++) {
+		freezero(sbuf[i], 64);
+	}
+
+      	add_header(packet, "Proxy-Authenticate:", buf, SIP_HEAD_PROXYAUTHEN);
+
+	add_header(packet, "Content-Type:", " application/sdp\r\n", 
+		SIP_HEAD_CONTENTTYPE);
+
+	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
+
+	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	if (len < 0) {
+		goto out;
+	}
+	
+	sslen = (parent->remote.ss_family == AF_INET) ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+	if (sendto(parent->so, sc->outbuf, len, 0, (struct sockaddr *)&parent->remote, sslen) < 0) {
+		goto out;
+	}
+
+	sc->activity = time(NULL);
+	parent->activity = sc->activity;
+
+out:
+	free(packet);
+	return -1;
+
+}
 
 /*
  * CALCULATE HA1 - creates H(username|":"|realm|":"|password)
