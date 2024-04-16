@@ -67,6 +67,7 @@
 
 #define PROXIMASIP_USER		"_proximasip"
 #define DEFAULT_AVMBOX		"192.168.199.12"
+#define DEFAULT_USER		"anonymous"
 #define MAX_BUFSZ		65535
 #define LISTENPORT		12345
 #define TIMEOUT			10
@@ -315,6 +316,7 @@ main(int argc, char *argv[])
 	int sel;
 	int no_icmp = 0;
 
+	char *buf = NULL;
 	char myname[256];
 
 	struct cfg cfg;
@@ -324,6 +326,21 @@ main(int argc, char *argv[])
 	memset((char *)&cfg, 0, sizeof(cfg));
 	
 	cfg.a = DEFAULT_AVMBOX;
+	cfg.u = DEFAULT_USER;
+
+#ifdef DEFAULT_PASS
+	cfg.p = DEFAULT_PASS;
+#else
+	buf = calloc_conceal(1, 64);
+	if (buf == NULL) {
+		perror("calloc");
+		exit(1);
+	}
+	arc4random_buf(myname, sizeof(myname));
+	mybase64_encode(myname, 16, buf, 64);
+	cfg.p = buf;
+	explicit_bzero(&myname, sizeof(myname));
+#endif
 
 	while ((ch = getopt(argc, argv, "Ia:du:p:")) != -1) {
 		switch (ch) {
