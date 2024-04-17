@@ -1019,7 +1019,8 @@ destroy_payload(struct parsed *parser)
 
 	while (!SLIST_EMPTY(&parser->data)) {
              n1 = SLIST_FIRST(&parser->data);
-	     free(n1->fields);
+	     if (n1->fieldlen)
+	     	free(n1->fields);
 	     if (n1->replacelen)
 		free(n1->replace);
              SLIST_REMOVE_HEAD(&parser->data, entries);
@@ -1350,7 +1351,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			goto out;
 		}
 		
-		sc = calloc_conceal(1, sizeof(struct sipconn));
+		sc = calloc(1, sizeof(struct sipconn));
 		if (sc == NULL) {
 			my_syslog(LOG_INFO, "calloc: %m");
 			goto out;
