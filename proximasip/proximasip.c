@@ -1241,7 +1241,7 @@ copy_header(struct parsed *from, int type, struct parsed *to, int newtype)
 {
 	struct sipdata *nf, *n0, *n1;
 	char s_type[512];
-	int len, oldlen;
+	int len;
 
 	if (newtype == -1)
 		newtype = type;
@@ -1258,23 +1258,20 @@ copy_header(struct parsed *from, int type, struct parsed *to, int newtype)
 			if (nf->replacelen)
 				len = nf->replacelen;
 
-			oldlen = len;
-
 			len -= typeheader(type, NULL, 0); 	/* trim */
 			len += typeheader(newtype, s_type, sizeof(s_type));
-			n1->fields = malloc(len + 1);
+			n1->fields = malloc(len + 2);
 			if (n1->fields == NULL) {
 				perror("malloc");
 				return -1;
 			}
 
-			n1->fieldlen = len;
+			n1->fieldlen = len + 1;
 			n1->type = newtype; 
 
-			oldlen -= typeheader(type, NULL, 0);
-
-			strlcpy(n1->fields, s_type, typeheader(newtype, NULL, 0));
-			strlcat(n1->fields, &nf->fields[typeheader(type, NULL, 0)], oldlen);
+			strlcpy(n1->fields, s_type, n1->fieldlen);
+			strlcat(n1->fields, ":", n1->fieldlen);
+			strlcat(n1->fields, &nf->fields[typeheader(type, NULL, 0)], n1->fieldlen);
 			
 
 			SLIST_INSERT_HEAD(&to->data, n1, entries);
