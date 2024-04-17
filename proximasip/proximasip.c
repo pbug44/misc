@@ -1493,6 +1493,7 @@ timeout_proxima(struct cfg *cfg)
 {
 	struct sipconn *sc, *sc0;
 	time_t now;
+	int remove = 0;
 
 
 	now = time(NULL);
@@ -1555,10 +1556,10 @@ timeout_proxima(struct cfg *cfg)
 		if (sc->state == STATE_TRYING) {
 			/* this is when we just got the INVITE or NON-INVITE */
 			if (sc->flags & INVITE_TIMEOUT) {
-				delete_sc(cfg, sc);
+				remove = 1;
 				sc->flags &= ~(INVITE_TIMEOUT);
 			} else if (sc->flags & PROXY_INVITE_TIMEOUT) {
-				delete_sc(cfg, sc);
+				remove = 1;
 				sc->flags &= ~(PROXY_INVITE_TIMEOUT);
 			} else if (sc->flags & INVITE_RESPONSE_RETRANSMIT) {
 				//retransmit_sc(cfg, sc);	
@@ -1568,10 +1569,10 @@ timeout_proxima(struct cfg *cfg)
 		} else if (sc->state == STATE_PROCEEDING) {
 			/* this is when we're Ringing */
 			if (sc->flags & INVITE_TIMEOUT) {
-				delete_sc(cfg, sc);
+				remove = 1;
 				sc->flags &= ~(INVITE_TIMEOUT);
 			} else if (sc->flags & PROXY_INVITE_TIMEOUT) {
-				delete_sc(cfg, sc);
+				remove = 1;
 				sc->flags &= ~(PROXY_INVITE_TIMEOUT);
 			} 
 		} else if (sc->state == STATE_COMPLETED) {
@@ -1581,9 +1582,12 @@ timeout_proxima(struct cfg *cfg)
 			if ((sc->state == 0) || (sc->state == -1))
 				return;
 			/* we're in terminated mode delete transaction */
-			delete_sc(cfg, sc);
+			remove = 1;
 		}
 	}
+
+	if (remove)
+		delete_sc(cfg, sc);
 }
 
 
