@@ -1270,7 +1270,6 @@ copy_header(struct parsed *from, int type, struct parsed *to, int newtype)
 			n1->type = newtype; 
 
 			strlcpy(n1->fields, s_type, n1->fieldlen);
-			strlcat(n1->fields, ":", n1->fieldlen);
 			strlcat(n1->fields, &nf->fields[typeheader(type, NULL, 0)], n1->fieldlen);
 			
 
