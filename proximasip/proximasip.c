@@ -652,7 +652,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 						syslog(LOG_INFO, "strdup: %m");
 						return (NULL);
 					}
-					rsc->laddress = sc->address;	/*dont need to ever clean*/
+					rsc->laddress = sc->laddress;	/*dont need to ever clean*/
 					rsc->inbuf = buf;
 					rsc->inbuflen = len;
 	
@@ -679,7 +679,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 						syslog(LOG_INFO, "strdup: %m");
 						return (NULL);
 					}
-					rsc->laddress = sc->address;	/*dont need to ever clean*/
+					rsc->laddress = sc->laddress;	/*dont need to ever clean*/
 					rsc->inbuf = buf;
 					rsc->inbuflen = len;
 
@@ -1254,25 +1254,35 @@ copy_header(struct parsed *from, int type, struct parsed *to, int newtype)
 				return -1;
 			}
 
-			len = nf->fieldlen;
-			if (nf->replacelen)
+			if (nf->replacelen) {
 				len = nf->replacelen;
+			} else {
+				len = nf->fieldlen;
+				len -= typeheader(type, NULL, 0); /* trim */
+				len += typeheader(newtype, s_type, 
+					sizeof(s_type));
+			}
+			len += 2;
 
-			len -= typeheader(type, NULL, 0); 	/* trim */
-			len += typeheader(newtype, s_type, sizeof(s_type));
-			n1->fields = malloc(len + 2);
+			n1->fields = malloc(len);
 			if (n1->fields == NULL) {
 				perror("malloc");
 				return -1;
 			}
 
-			n1->fieldlen = len + 1;
+			n1->fieldlen = len;
 			n1->type = newtype; 
 
-			strlcpy(n1->fields, s_type, n1->fieldlen);
-			strlcat(n1->fields, &nf->fields[typeheader(type, NULL, 0)], n1->fieldlen);
+			if (nf->replacelen) {
+				strlcpy(n1->fields, nf->replace, 3);
+				strlcat(n1->fields, &nf->replace[2], len);
+			} else {
+				strlcpy(n1->fields, s_type, len);
+				strlcat(n1->fields, 
+					&nf->fields[typeheader(type, NULL, 0)],
+					len);
+			}
 			
-
 			SLIST_INSERT_HEAD(&to->data, n1, entries);
 		}
 	}
