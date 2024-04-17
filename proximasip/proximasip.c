@@ -459,7 +459,7 @@ main(int argc, char *argv[])
 	if (! debug) {
 		daemon(0,0);
 		openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	} else
+	} else {
 		openlog("proximasip", LOG_PID | LOG_NDELAY | LOG_CONS, LOG_DAEMON);
 	}
 
@@ -829,7 +829,6 @@ parse_payload(struct sipconn *sc)
 	struct parsed *parser;
 	struct sipdata *n1, *status;
 	char *nl;
-	int count = 0;
 
 	int newlen, i;
 	int header = 0;
@@ -839,18 +838,6 @@ parse_payload(struct sipconn *sc)
 	int len = sc->inbuflen;
 
 	SLIST_INIT(&sc->packets);
-
-#if 0
-	/* 
-	 * SAFETY!!! remove later!
-	 */
-	SLIST_FOREACH(parser, &sc->packets, entries) {
-		count++;
-	}
-
-	if (count > 2)
-		return -1;
-#endif
 
 	parser = (struct parsed *)calloc(1, sizeof(struct parsed));		
 	if (parser == NULL) {
