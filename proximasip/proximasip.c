@@ -301,6 +301,7 @@ struct sipconn * authenticate(struct cfg *, struct sipconn *);
 char * statuscode_s(int);
 int typeheader(int, char *, int);
 void my_syslog(int, char *, ...);
+int get_method(struct parsed *);
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
 extern int mybase64_decode(char const *, u_char *, size_t);
@@ -827,7 +828,7 @@ int
 parse_payload(struct sipconn *sc)
 {
 	struct parsed *parser;
-	struct sipdata *n1, *status;
+	struct sipdata *n1;
 	char *nl;
 
 	int newlen, i;
@@ -855,24 +856,29 @@ parse_payload(struct sipconn *sc)
 				n1 = calloc(sizeof(struct sipdata), 1);
 				if (n1 == NULL) {
 					perror("calloc");
-					return (-1);
+					goto err;
 				}
 
 				n1->fields = malloc(len + 1);
 				if (n1->fields == NULL) {
 					perror("malloc");
-					return (-1);
+					goto err;
 				}
 				memcpy(n1->fields, payload, len);
 				n1->fields[len] = '\0';
 				n1->fieldlen = len;
 				n1->flags |= SIP_HEAD_FLAG_BODY;
 				n1->type = 0;
+
+				sc->method = get_method(parser);
+				if (sc->method == -1)
+					goto err;
+
 				SLIST_INSERT_HEAD(&parser->data, n1, entries);
 				SLIST_INSERT_HEAD(&sc->packets, parser, entries);
 				return len;
 			} else
-				return (-1);
+				goto err;
 		}
 
 		newlen = (nl - payload);
@@ -884,14 +890,14 @@ parse_payload(struct sipconn *sc)
 		n1 = calloc(sizeof(struct sipdata), 1);
 		if (n1 == NULL) {
 			perror("calloc");
-			return (-1);
+			goto err;
 		}
 
 		if (seencl == 1) {
 			n1->fields = malloc(len + 1);
 			if (n1->fields == NULL) {
 				perror("malloc");
-				return (-1);
+				goto err;
 			}
 			memcpy(n1->fields, payload, len);
 			n1->fields[len] = '\0';
@@ -908,7 +914,7 @@ parse_payload(struct sipconn *sc)
 			n1->fields = malloc(newlen + 1);
 			if (n1->fields == NULL) {
 				perror("malloc");
-				return (-1);
+				goto err;
 			}
 
 			memcpy(n1->fields, payload, newlen);
@@ -928,7 +934,7 @@ parse_payload(struct sipconn *sc)
 					n1->fields = malloc(newlen + 1);
 					if (n1->fields == NULL) {
 						perror("malloc");
-						return (-1);
+						goto err;
 					}
 					memcpy(n1->fields, payload, newlen);
 					n1->fields[newlen] = '\0';
@@ -951,7 +957,7 @@ parse_payload(struct sipconn *sc)
 						n1->replace = malloc(tokenlen);
 						if (n1->replace == NULL) {
 							perror("malloc");
-							return (-1);	
+							goto err;
 						}
 
 						n1->replacelen = tokenlen;
@@ -972,7 +978,7 @@ parse_payload(struct sipconn *sc)
 					n1->fields = malloc(newlen + 1);
 					if (n1->fields == NULL) {
 						perror("malloc");
-						return (-1);
+						goto err;
 					}
 					memcpy(n1->fields, payload, newlen);
 					n1->fields[newlen] = '\0';
@@ -1004,24 +1010,18 @@ parse_payload(struct sipconn *sc)
 		}
 	}
 
-	status = find_header(parser, SIP_HEAD_STATUS);
-	if (status != NULL) {
-		for (i = 0; i < nitems(methods); i++) {
-			if (strncmp(status->fields, methods[i].method, \
-					strlen(methods[i].method)) == 0) {
-				sc->method = methods[i].meth;
-				my_syslog(LOG_DEBUG, "method is %s type %d\n", methods[i].method,
-					sc->method);
-				break;
-			}
-		}
-	} else {
-		my_syslog(LOG_INFO, "can't find status, this is bad");
-	}
+	sc->method = get_method(parser);
+	if (sc->method == -1)
+		goto err;
+
 
 	SLIST_INSERT_HEAD(&sc->packets, parser, entries);
 
 	return (0);
+
+err:
+	destroy_payload(parser);
+	return -1;
 }
 
 
@@ -2644,4 +2644,31 @@ my_syslog(int priority, char *fmt, ...)
 		vsyslog(priority, fmt, ap);	
 
 	va_end(ap);
+}
+
+int
+get_method(struct parsed *parser)
+{
+	struct sipdata *status;
+	int ret = -1;
+	int i;
+
+	status = find_header(parser, SIP_HEAD_STATUS);
+	if (status != NULL) {
+		for (i = 0; i < nitems(methods); i++) {
+			if (strncmp(status->fields, methods[i].method, \
+					strlen(methods[i].method)) == 0) {
+
+				ret = methods[i].meth;
+
+				my_syslog(LOG_DEBUG, 
+					"method is %s type %d\n", 
+					methods[i].method, ret);
+
+				break;
+			}
+		}
+	} 
+
+	return ret;
 }
