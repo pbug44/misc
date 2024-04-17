@@ -1038,6 +1038,8 @@ destroy_payload(struct parsed *parser)
 
 	do {
 		n1 = SLIST_FIRST(&parser->data);
+		if (n1 == NULL)
+			break;
 
 		if (n1->fieldlen)
 			free(n1->fields);
@@ -1606,6 +1608,8 @@ delete_sc(struct cfg *cfg, struct sipconn *sc)
 
 	do {
 		packets = SLIST_FIRST(&sc->packets);
+		if (packets == NULL)
+			break;
 		destroy_payload(packets);	
 		SLIST_REMOVE_HEAD(&sc->packets, entries);
 		free(packets);
