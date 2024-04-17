@@ -1178,7 +1178,9 @@ new_payload(struct parsed *packets, char *buf, int len)
 						tmpbuf[np->replacelen] = '\0';
 						if (tmpbuf[np->replacelen - 2] == '\r')
 							tmpbuf[np->replacelen - 2] = '\0';
+#if DEBUG
 						printf("%s\n", tmpbuf);
+#endif
 						memcpy(&buf[offset], np->replace, np->replacelen);
 						offset += np->replacelen;
 					} else {
@@ -1186,7 +1188,9 @@ new_payload(struct parsed *packets, char *buf, int len)
 						tmpbuf[np->fieldlen] = '\0';
 						if (tmpbuf[np->fieldlen - 2] == '\r')
 							tmpbuf[np->fieldlen - 2] = '\0';
+#if DEBUG
 						printf("%s\n", tmpbuf);
+#endif
 						memcpy(&buf[offset], np->fields, np->fieldlen);
 						offset += np->fieldlen;
 					}
@@ -1424,7 +1428,12 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 			if (x == BIND_PORT_INT)
 				sc->internal = 1;
 
-			inet_ntop(res->ai_family, &sc->local, laddress, sizeof(laddress));
+			switch (res->ai_family) {
+			case AF_INET:
+				inet_ntop(AF_INET, &((struct sockaddr_in *)&sc->local)->sin_addr , laddress, sizeof(laddress));
+			default:
+				inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&sc->local)->sin6_addr , laddress, sizeof(laddress));
+			}
 
 			sc->laddress = strdup(laddress);
 			if (sc->laddress == NULL) {
