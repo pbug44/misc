@@ -271,6 +271,7 @@ struct cfg {
 
 /* prototypes */
 int parse_payload(struct sipconn *);
+int comp_payload(struct parsed *, char *, int);
 int new_payload(struct parsed *, char *, int);
 void destroy_payload(struct parsed *);
 void add_header(struct parsed *, char *, char *, int);
@@ -303,7 +304,7 @@ extern int mybase64_decode(char const *, u_char *, size_t);
 
 
 
-int sip_compact = 0;
+int sip_compact = 1;		/* compress all sip packets */
 char *useragent = "User-Agent: AVM\r\n";
 
 int
@@ -455,10 +456,13 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	if (! debug)
+	if (! debug) {
 		daemon(0,0);
+		openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	} else
+		openlog("proximasip", LOG_PID | LOG_NDELAY | LOG_CONS, LOG_DAEMON);
+	}
 
-	openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	syslog(LOG_INFO, "proximasip starting up");
 
 	pw = getpwnam(PROXIMASIP_USER);
@@ -649,6 +653,13 @@ proxima(struct cfg *cfg, fd_set *rset)
 					rsc->laddress = sc->address;	/*dont need to ever clean*/
 					rsc->inbuf = buf;
 					rsc->inbuflen = len;
+	
+					rsc->outbuflen = 1500;	/* big enough? */
+					rsc->outbuf = calloc(1, rsc->outbuflen);
+					if (rsc->outbuf == NULL) {
+						syslog(LOG_INFO, "calloc: %m");
+						return (NULL);
+					}
 				}
 
 				return (rsc);
@@ -669,6 +680,13 @@ proxima(struct cfg *cfg, fd_set *rset)
 					rsc->laddress = sc->address;	/*dont need to ever clean*/
 					rsc->inbuf = buf;
 					rsc->inbuflen = len;
+
+					rsc->outbuflen = 1500;	/* big enough? */
+					rsc->outbuf = calloc(1, rsc->outbuflen);
+					if (rsc->outbuf == NULL) {
+						syslog(LOG_INFO, "calloc: %m");
+						return (NULL);
+					}
 				}
 
 				return (rsc);
@@ -710,10 +728,13 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 	if (packets == NULL)
 		return;
 	
-	len = new_payload(packets, sc->inbuf, sc->inbuflen);
+	len = comp_payload(packets, sc->inbuf, sc->inbuflen);
 	if (len < 0) {
 		return;
 	}
+
+	syslog(LOG_DEBUG, "entering state logic, state=%d, method=%d", 
+		sc->state, sc->method);
 
 	switch (sc->state) {
 	case STATE_TRYING:
@@ -1045,7 +1066,7 @@ find_header(struct parsed *parser, int type)
 }
 
 int
-new_payload(struct parsed *packets, char *buf, int len)
+comp_payload(struct parsed *packets, char *buf, int len)
 {
 	struct sipdata *np;
 	char tmpbuf[1024];
@@ -1057,6 +1078,88 @@ new_payload(struct parsed *packets, char *buf, int len)
 	/* reconstruct header */
 
 	
+	for (int i = 0; tokens[i].type != SIP_HEAD_MAX; i++) {
+		SLIST_FOREACH(np, &packets->data, entries) {
+			if (np->flags & SIP_HEAD_FLAG_BODY)
+				continue;
+
+			/* strip out known X- Headers, why do we need them? */
+			if (sip_compact && ((np->type == SIP_HEAD_XAUSERAGENT) ||
+				(np->type == SIP_HEAD_XACONTACT)))
+				continue;
+
+
+			if (tokens[i].type == np->type) {
+				if (np->flags & SIP_HEAD_FLAG_COMPACT) {
+					memcpy(&tmpbuf, np->replace, np->replacelen);
+					tmpbuf[np->replacelen] = '\0';
+					if (tmpbuf[np->replacelen - 2] == '\r')
+						tmpbuf[np->replacelen - 2] = '\0';
+#if DEBUG
+					printf("%s\n", tmpbuf);
+#endif
+					memcpy(&buf[offset], np->replace, np->replacelen);
+					offset += np->replacelen;
+
+				} else {
+					if (np->replacelen != 0) {
+						memcpy(&tmpbuf, np->replace, np->replacelen);
+						tmpbuf[np->replacelen] = '\0';
+						if (tmpbuf[np->replacelen - 2] == '\r')
+							tmpbuf[np->replacelen - 2] = '\0';
+#if DEBUG
+						printf("%s\n", tmpbuf);
+#endif
+						memcpy(&buf[offset], np->replace, np->replacelen);
+						offset += np->replacelen;
+					} else {
+						memcpy(&tmpbuf, np->fields, np->fieldlen);
+						tmpbuf[np->fieldlen] = '\0';
+						if (tmpbuf[np->fieldlen - 2] == '\r')
+							tmpbuf[np->fieldlen - 2] = '\0';
+						printf("%s\n", tmpbuf);
+						memcpy(&buf[offset], np->fields, np->fieldlen);
+						offset += np->fieldlen;
+					}
+				}
+			}
+		}
+	}
+
+	/* reconstruct body */
+
+
+	SLIST_FOREACH(np, &packets->data, entries) {
+		if (!(np->flags & SIP_HEAD_FLAG_BODY))
+			continue;
+
+		memcpy(&tmpbuf, np->fields, np->fieldlen);
+		tmpbuf[np->fieldlen] = '\0';
+		if (tmpbuf[np->fieldlen - 2] == '\r')
+			tmpbuf[np->fieldlen - 2] = '\0';
+#if DEBUG
+		printf("%s\n", tmpbuf);
+#endif
+		memcpy(&buf[offset], np->fields, np->fieldlen);
+		offset += np->fieldlen;
+		break;
+	}
+
+	return (offset);
+}
+
+
+
+
+int
+new_payload(struct parsed *packets, char *buf, int len)
+{
+	struct sipdata *np;
+	char tmpbuf[1024];
+	int offset = 0;
+
+	/* reconstruct header */
+
 	for (int i = 0; tokens[i].type != SIP_HEAD_MAX; i++) {
 		SLIST_FOREACH(np, &packets->data, entries) {
 			if (np->flags & SIP_HEAD_FLAG_BODY)
@@ -1810,7 +1913,7 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
-	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	len = new_payload(packet, sc->outbuf, sc->outbuflen);
 	if (len < 0) {
 		goto out;
 	}
@@ -1901,7 +2004,7 @@ reply_internal_error(struct cfg *cfg, struct sipconn *sc)
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
-	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	len = new_payload(packet, sc->outbuf, sc->outbuflen);
 	if (len < 0) {
 		goto out;
 	}
@@ -1991,7 +2094,7 @@ reply_4xx(struct sipconn *sc, int code)
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
-	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	len = new_payload(packet, sc->outbuf, sc->outbuflen);
 	if (len < 0) {
 		goto out;
 	}
@@ -2110,7 +2213,7 @@ reply_proxy_authenticate(struct cfg *cfg, struct sipconn *sc)
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
-	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	len = new_payload(packet, sc->outbuf, sc->outbuflen);
 	if (len < 0) {
 		goto out;
 	}
@@ -2477,7 +2580,7 @@ authenticate(struct cfg *cfg, struct sipconn *sc)
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
-	len = new_payload(packet, sc->inbuf, sc->inbuflen);	
+	len = new_payload(packet, sc->outbuf, sc->outbuflen);
 	if (len < 0) {
 		goto out;
 	}
