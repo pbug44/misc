@@ -1010,6 +1010,8 @@ parse_payload(struct sipconn *sc)
 			if (strncmp(status->fields, methods[i].method, \
 					strlen(methods[i].method)) == 0) {
 				sc->method = methods[i].meth;
+				my_syslog(LOG_DEBUG, "method is %s type %d\n", methods[i].method,
+					sc->method);
 				break;
 			}
 		}
@@ -2638,6 +2640,8 @@ my_syslog(int priority, char *fmt, ...)
 		vfprintf(stderr, fmt, ap);
 		fprintf(stderr, "\n");
 	}
-	vsyslog(priority, fmt, ap);	
+	if (priority != LOG_DEBUG)
+		vsyslog(priority, fmt, ap);	
+
 	va_end(ap);
 }
