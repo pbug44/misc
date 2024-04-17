@@ -1588,10 +1588,10 @@ timeout_proxima(struct cfg *cfg)
 			/* we're in terminated mode delete transaction */
 			remove = 1;
 		}
-	}
 
-	if (remove)
-		delete_sc(cfg, sc);
+		if (remove)
+			delete_sc(cfg, sc);
+	}
 }
 
 
