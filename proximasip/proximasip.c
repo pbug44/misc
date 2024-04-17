@@ -742,7 +742,6 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		if (sc->method == METHOD_INVITE) {
 			if (sc->internal && sc->auth == 0) {
 				reply_proxy_authenticate(cfg, sc);
-				goto out;
 			} else if (sc->internal && sc->auth) {
 				/* we're not a outgoing proxy so rip it dunn */
 				reply_4xx(sc, 404);
@@ -760,7 +759,6 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		} else if (sc->method == METHOD_REGISTER) {
 			if (sc->internal) {
 				authenticate(cfg, sc);
-				goto out;
 			} else {
 				/* we're getting a REGISTER from outside */
 				reply_4xx(sc, 403);	/* forbidden */
@@ -776,7 +774,6 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		if (sc->method == METHOD_INVITE) {
 			if (sc->internal && sc->auth == 0) {
 				reply_proxy_authenticate(cfg, sc);
-				goto out;
 			} else if (sc->internal && sc->auth) {
 				reply_4xx(sc, 404);
 				goto terminate;
@@ -802,17 +799,10 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		break;
 	}
 
-	goto out;
+	return;
 
 terminate:
 	sc->state = STATE_TERMINATED;
-
-out:
-	if (siperr == -1 && sc->state != STATE_LISTEN) {
-		/* this is a format error, drop it here! */
-		my_syslog(LOG_INFO, "dropping packet state immediately from %s\n", sc->address);
-		delete_sc(cfg, sc);
-	}
 }
 
 
@@ -2632,7 +2622,7 @@ my_syslog(int priority, char *fmt, ...)
 	va_start(ap, fmt);
 	if (debug) {
 		vfprintf(stderr, fmt, ap);
-		fflush(stderr);
+		fprintf(stderr, "\n");
 	}
 	vsyslog(priority, fmt, ap);	
 	va_end(ap);
