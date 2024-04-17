@@ -300,6 +300,7 @@ int reply_proxy_authenticate(struct cfg *, struct sipconn *);
 struct sipconn * authenticate(struct cfg *, struct sipconn *);
 char * statuscode_s(int);
 int typeheader(int, char *, int);
+void my_syslog(int, char *, ...);
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
 extern int mybase64_decode(char const *, u_char *, size_t);
@@ -308,13 +309,13 @@ extern int mybase64_decode(char const *, u_char *, size_t);
 
 int sip_compact = 1;		/* compress all sip packets */
 char *useragent = "User-Agent: AVM\r\n";
+int debug = 0;
 
 int
 main(int argc, char *argv[])
 {
 	fd_set rset;
 
-	int debug = 0;
 	int ch, alg;
 	int sel;
 	int no_icmp = 0;
@@ -460,12 +461,10 @@ main(int argc, char *argv[])
 
 	if (! debug) {
 		daemon(0,0);
-		openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	} else {
-		openlog("proximasip", LOG_PID | LOG_NDELAY | LOG_CONS, LOG_DAEMON);
 	}
 
-	syslog(LOG_INFO, "proximasip starting up");
+	openlog("proximasip", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	my_syslog(LOG_INFO, "proximasip starting up");
 
 	pw = getpwnam(PROXIMASIP_USER);
 	if (pw == NULL) {
@@ -649,7 +648,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 					rsc->parent = sc;
 					rsc->address = strdup(address);
 					if (rsc->address == NULL) {
-						syslog(LOG_INFO, "strdup: %m");
+						my_syslog(LOG_INFO, "strdup: %m");
 						return (NULL);
 					}
 					rsc->laddress = sc->laddress;	/*dont need to ever clean*/
@@ -659,7 +658,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 					rsc->outbuflen = 1500;	/* big enough? */
 					rsc->outbuf = calloc(1, rsc->outbuflen);
 					if (rsc->outbuf == NULL) {
-						syslog(LOG_INFO, "calloc: %m");
+						my_syslog(LOG_INFO, "calloc: %m");
 						return (NULL);
 					}
 				}
@@ -676,7 +675,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 					rsc->parent = sc;
 					rsc->address = strdup(address);
 					if (rsc->address == NULL) {
-						syslog(LOG_INFO, "strdup: %m");
+						my_syslog(LOG_INFO, "strdup: %m");
 						return (NULL);
 					}
 					rsc->laddress = sc->laddress;	/*dont need to ever clean*/
@@ -686,7 +685,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 					rsc->outbuflen = 1500;	/* big enough? */
 					rsc->outbuf = calloc(1, rsc->outbuflen);
 					if (rsc->outbuf == NULL) {
-						syslog(LOG_INFO, "calloc: %m");
+						my_syslog(LOG_INFO, "calloc: %m");
 						return (NULL);
 					}
 				}
@@ -722,7 +721,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 	}
 
 	if (check_rfc3261(sc, &siperr) < 0) {
-		syslog(LOG_INFO, "not a SIP packet, or format error %d from %s\n", siperr, sc->address);
+		my_syslog(LOG_INFO, "not a SIP packet, or format error %d from %s\n", siperr, sc->address);
 		goto terminate;
 	}
 
@@ -735,7 +734,7 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 		return;
 	}
 
-	syslog(LOG_DEBUG, "entering state logic, state=%d, method=%d", 
+	my_syslog(LOG_DEBUG, "entering state logic, state=%d, method=%d", 
 		sc->state, sc->method);
 
 	switch (sc->state) {
@@ -809,13 +808,9 @@ terminate:
 	sc->state = STATE_TERMINATED;
 
 out:
-	packets = SLIST_FIRST(&sc->packets);
-	if (packets != NULL)
-		destroy_payload(packets);
-
 	if (siperr == -1 && sc->state != STATE_LISTEN) {
 		/* this is a format error, drop it here! */
-		syslog(LOG_INFO, "dropping packet state immediately from %s\n", sc->address);
+		my_syslog(LOG_INFO, "dropping packet state immediately from %s\n", sc->address);
 		delete_sc(cfg, sc);
 	}
 }
@@ -1016,7 +1011,7 @@ parse_payload(struct sipconn *sc)
 			}
 		}
 	} else {
-		syslog(LOG_INFO, "can't find status, this is bad");
+		my_syslog(LOG_INFO, "can't find status, this is bad");
 	}
 
 	SLIST_INSERT_HEAD(&sc->packets, parser, entries);
@@ -1367,7 +1362,7 @@ add_socket(struct cfg *cfg, uint16_t lport, char *rhost, uint16_t rport, int x)
 		
 		sc = calloc_conceal(1, sizeof(struct sipconn));
 		if (sc == NULL) {
-			syslog(LOG_INFO, "calloc: %m");
+			my_syslog(LOG_INFO, "calloc: %m");
 			goto out;
 		}
 
@@ -1627,7 +1622,7 @@ proc_icmp(struct cfg *cfg)
 
 		/* opportunistic timeout */
 		if (difftime(now, sc->activity) > TIMEOUT) {
-			syslog(LOG_INFO, "timing out connection from %s", 
+			my_syslog(LOG_INFO, "timing out connection from %s", 
 				sc->address);
 			delete_sc(cfg, sc);
 			continue;
@@ -1686,7 +1681,7 @@ proc_icmp6(struct cfg *cfg)
 
 		/* opportunistic timeout */
 		if (difftime(now, sc->activity) > TIMEOUT) {
-			syslog(LOG_INFO, "timing out connection from %s", 
+			my_syslog(LOG_INFO, "timing out connection from %s", 
 				sc->address);
 			delete_sc(cfg, sc);
 			continue;
@@ -1746,7 +1741,7 @@ icmp_func(struct cfg *cfg, struct sipconn *sc, char *buf, int len, int type)
 	/* XXX I'd like to dig deeper but we'll have to see */
 	/* all checks are done, proceed to act on them */
 
-	syslog(LOG_INFO, "dropping state from %s port %u due to ICMP type %s"
+	my_syslog(LOG_INFO, "dropping state from %s port %u due to ICMP type %s"
 				" code %u", sc->address, ntohs(rsin->sin_port),  \
 				(icmph.icmp_type == ICMP_UNREACH) ? "unreach" : \
 				"timex", icmph.icmp_code);
@@ -1790,7 +1785,7 @@ icmp6_func(struct cfg *cfg, struct sipconn *sc, char *buf, int len, int type)
 	/* XXX I'd like to dig deeper but we'll have to see */
 	/* all checks are done, proceed to act on them */
 
-	syslog(LOG_INFO, "IP6 dropping state from %s port %u due to ICMP type %s"
+	my_syslog(LOG_INFO, "IP6 dropping state from %s port %u due to ICMP type %s"
 				" code %u", sc->address, ntohs(rsin->sin6_port),  \
 				(icmp6.icmp6_type == ICMP6_DST_UNREACH) ? "unreach" : \
 				"timex", icmp6.icmp6_code);
@@ -1825,7 +1820,7 @@ check_rfc3261(struct sipconn *sc, int *siperr)
 	*siperr = -1;
 
 	if (sc->state == STATE_TERMINATED) {
-		syslog(LOG_INFO, "trying to reactivate a terminated convo?  sorry");
+		my_syslog(LOG_INFO, "trying to reactivate a terminated convo?  sorry");
 		return -1;
 	}
 
@@ -1868,7 +1863,7 @@ copy_sc(struct cfg *cfg, struct sipconn *sc)
 
 	sc1 = calloc(1, sizeof(struct sipconn));
 	if (sc1 == NULL) {
-		syslog(LOG_INFO, "calloc: %m");
+		my_syslog(LOG_INFO, "calloc: %m");
 		return NULL;
 	}
 
@@ -1885,7 +1880,7 @@ try_proxy(struct cfg *cfg, struct sipconn *sc)
 	
 	sc_copy = copy_sc(cfg, sc);
 	if (sc_copy == NULL) {
-		syslog(LOG_INFO, "trying to proxy failed!");
+		my_syslog(LOG_INFO, "trying to proxy failed!");
 		return NULL;
 	}
 
@@ -1897,7 +1892,7 @@ try_proxy(struct cfg *cfg, struct sipconn *sc)
 	}
 
 	if (sc_int == NULL) {
-		syslog(LOG_INFO, "internal error, can't find internal sipconn");
+		my_syslog(LOG_INFO, "internal error, can't find internal sipconn");
 		return NULL;
 	}
 
@@ -1911,7 +1906,7 @@ try_proxy(struct cfg *cfg, struct sipconn *sc)
 	/* now try to send something */
 
 	if (send(sc_copy->so, sc_copy->inbuf, sc_copy->inbuflen, 0) < 0) {
-		syslog(LOG_INFO, "send: %m");
+		my_syslog(LOG_INFO, "send: %m");
 		return NULL;
 	}
 
@@ -2408,7 +2403,7 @@ authenticate(struct cfg *cfg, struct sipconn *sc)
 	/* for preservation */
 	inputstring = calloc_conceal(1, sd->fieldlen + 1);
 	if (inputstring == NULL) {
-		syslog(LOG_INFO, "calloc_conceal: %m");
+		my_syslog(LOG_INFO, "calloc_conceal: %m");
 		return NULL;
 	}
 
@@ -2430,7 +2425,7 @@ authenticate(struct cfg *cfg, struct sipconn *sc)
 
 					authtok[i].value = malloc_conceal(len);
 					if (authtok[i].value == NULL) {
-						syslog(LOG_INFO, "malloc: %m");
+						my_syslog(LOG_INFO, "malloc: %m");
 						goto cleantok;
 					}
 
@@ -2627,4 +2622,18 @@ statuscode_s(int code)
 	}
 
 	return ("unknown");
+}
+
+void
+my_syslog(int priority, char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	if (debug) {
+		vfprintf(stderr, fmt, ap);
+		fflush(stderr);
+	}
+	vsyslog(priority, fmt, ap);	
+	va_end(ap);
 }
