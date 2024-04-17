@@ -397,9 +397,15 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	cfg.mydomain = strchr(myname, '.');
-	if (cfg.mydomain == NULL)
+	if ((p = strchr(myname, '.')) == NULL) {
 		cfg.mydomain = myname;
+	} else {
+		p++;
+		if (*p != '\0')
+			cfg.mydomain = p;
+		else
+			cfg.mydomain = myname;
+	}
 
 	for (alg = ALG_MD5; alg <= ALG_SHA2; alg++) {
 		cfg.ha[alg].ha1 = calculate_ha1((char *)&cfg.u, (char *)&cfg.p,\
