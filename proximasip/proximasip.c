@@ -809,6 +809,7 @@ parse_payload(struct sipconn *sc)
 
 	SLIST_INIT(&sc->packets);
 
+#if 0
 	/* 
 	 * SAFETY!!! remove later!
 	 */
@@ -818,6 +819,7 @@ parse_payload(struct sipconn *sc)
 
 	if (count > 2)
 		return -1;
+#endif
 
 	parser = (struct parsed *)calloc(1, sizeof(struct parsed));		
 	if (parser == NULL) {
@@ -993,6 +995,8 @@ parse_payload(struct sipconn *sc)
 				break;
 			}
 		}
+	} else {
+		syslog(LOG_INFO, "can't find status, this is bad");
 	}
 
 	SLIST_INSERT_HEAD(&sc->packets, parser, entries);
