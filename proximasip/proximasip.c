@@ -584,13 +584,27 @@ proxima(struct cfg *cfg, fd_set *rset)
 	struct sockaddr_in *psin;
 	struct sockaddr_in6 *psin6;
 	socklen_t stlen = sizeof(struct sockaddr_storage);
-	static char *buf = NULL;
+	static char *inbuf = NULL;
+	static char *outbuf = NULL;
 	char address[INET6_ADDRSTRLEN];
 	int len;
 
-	if (buf == NULL) {
-		buf = calloc(1, MAX_BUFSZ);
-		if (buf == NULL)
+	if (inbuf == NULL) {
+		if (debug)
+			inbuf = calloc(1, MAX_BUFSZ);
+		else
+			inbuf = calloc_conceal(1, MAX_BUFSZ);
+
+		if (inbuf == NULL)
+			return NULL;
+	}
+	if (outbuf == NULL) {
+		if (debug)
+			outbuf = calloc(1, MAX_BUFSZ);
+		else
+			outbuf = calloc_conceal(1, MAX_BUFSZ);
+
+		if (outbuf == NULL)
 			return NULL;
 	}
 
@@ -599,7 +613,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 			continue;
 
 		if (FD_ISSET(sc->so, rset)) {
-			len = recvfrom(sc->so, buf, MAX_BUFSZ, 0, (struct sockaddr *)&st, &stlen);		
+			len = recvfrom(sc->so, inbuf, MAX_BUFSZ, 0, (struct sockaddr *)&st, &stlen);		
 			if (len < 0) {
 				perror("read");
 				return NULL;
@@ -611,6 +625,13 @@ proxima(struct cfg *cfg, fd_set *rset)
 				
 				if (sc1->af != ((struct sockaddr *)&st)->sa_family)
 					continue;
+				
+				/* some initializing on the LISTEN states */
+
+				sc1->inbuf = inbuf;
+				sc1->outbuf = outbuf;
+				sc1->inbuflen = MAX_BUFSZ;
+				sc1->outbuflen = MAX_BUFSZ;
 
 				switch (sc->af) {
 				case AF_INET6:
@@ -652,15 +673,11 @@ proxima(struct cfg *cfg, fd_set *rset)
 						return (NULL);
 					}
 					rsc->laddress = sc->laddress;	/*dont need to ever clean*/
-					rsc->inbuf = buf;
+					rsc->inbuf = inbuf;
 					rsc->inbuflen = len;
 	
-					rsc->outbuflen = 1500;	/* big enough? */
-					rsc->outbuf = calloc(1, rsc->outbuflen);
-					if (rsc->outbuf == NULL) {
-						my_syslog(LOG_INFO, "calloc: %m");
-						return (NULL);
-					}
+					rsc->outbuflen = MAX_BUFSZ;
+					rsc->outbuf = outbuf;
 				}
 
 				return (rsc);
@@ -679,15 +696,11 @@ proxima(struct cfg *cfg, fd_set *rset)
 						return (NULL);
 					}
 					rsc->laddress = sc->laddress;	/*dont need to ever clean*/
-					rsc->inbuf = buf;
+					rsc->inbuf = inbuf;
 					rsc->inbuflen = len;
 
-					rsc->outbuflen = 1500;	/* big enough? */
-					rsc->outbuf = calloc(1, rsc->outbuflen);
-					if (rsc->outbuf == NULL) {
-						my_syslog(LOG_INFO, "calloc: %m");
-						return (NULL);
-					}
+					rsc->outbuf = outbuf;
+					rsc->outbuflen = MAX_BUFSZ;
 				}
 
 				return (rsc);
