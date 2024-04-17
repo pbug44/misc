@@ -1037,7 +1037,7 @@ destroy_payload(struct parsed *parser)
 		return;
 
 	do {
-		n1 = SLIST_FIRST(&parser->data)) != NULL);
+		n1 = SLIST_FIRST(&parser->data);
 
 		if (n1->fieldlen)
 			free(n1->fields);
