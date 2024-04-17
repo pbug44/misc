@@ -275,6 +275,7 @@ int comp_payload(struct parsed *, char *, int);
 int new_payload(struct parsed *, char *, int);
 void destroy_payload(struct parsed *);
 void add_header(struct parsed *, char *, char *, int);
+int copy_header(struct parsed *, int, struct parsed *, int);
 struct sipdata * find_header(struct parsed *, int);
 int listen_proxima(struct cfg *, fd_set *);
 void timeout_proxima(struct cfg *);
@@ -298,6 +299,7 @@ u_char * calculate_ha2(char *, int, char *, size_t *);
 int reply_proxy_authenticate(struct cfg *, struct sipconn *);
 struct sipconn * authenticate(struct cfg *, struct sipconn *);
 char * statuscode_s(int);
+int typeheader(int, char *, int);
 
 extern int mybase64_encode(u_char const *, size_t, char *, size_t);
 extern int mybase64_decode(char const *, u_char *, size_t);
@@ -1215,6 +1217,72 @@ new_payload(struct parsed *packets, char *buf, int len)
 	return (offset);
 }
 
+int
+typeheader(int type, char *typename, int sz)
+{
+	int i;
+
+	for (i=0; tokens[i].token != NULL; i++) {
+		if (tokens[i].type == type) {
+
+			if (typename != NULL)
+				strlcpy(typename, tokens[i].token, sz);
+
+			return (strlen(tokens[i].token));
+		}
+	}
+
+	return 0;
+}
+
+
+int
+copy_header(struct parsed *from, int type, struct parsed *to, int newtype)
+{
+	struct sipdata *nf, *n0, *n1;
+	char s_type[512];
+	int len, oldlen;
+
+	if (newtype == -1)
+		newtype = type;
+
+	SLIST_FOREACH_SAFE(nf, &from->data, entries, n0) {
+		if (nf->type == type) {
+			n1 = calloc(sizeof(struct sipdata), 1);
+			if (n1 == NULL) {
+				perror("calloc");
+				return -1;
+			}
+
+			len = nf->fieldlen;
+			if (nf->replacelen)
+				len = nf->replacelen;
+
+			oldlen = len;
+
+			len -= typeheader(type, NULL, 0); 	/* trim */
+			len += typeheader(newtype, s_type, sizeof(s_type));
+			n1->fields = malloc(len + 1);
+			if (n1->fields == NULL) {
+				perror("malloc");
+				return -1;
+			}
+
+			n1->fieldlen = len;
+			n1->type = newtype; 
+
+			oldlen -= typeheader(type, NULL, 0);
+
+			strlcpy(n1->fields, s_type, typeheader(newtype, NULL, 0));
+			strlcat(n1->fields, &nf->fields[typeheader(type, NULL, 0)], oldlen);
+			
+
+			SLIST_INSERT_HEAD(&to->data, n1, entries);
+		}
+	}
+	
+	return 0;
+}
 
 void
 add_header(struct parsed *parser, char *header, char *contents, int type)
@@ -1872,25 +1940,16 @@ reply_trying(struct cfg *cfg, struct sipconn *sc)
 		sc->laddress, sc->branchid);
 
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
-	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
-		goto out;
 
-	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+	copy_header(from, SIP_HEAD_FROM, packet, SIP_HEAD_TO);
 
 	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>\r\n", 
 		sc->laddress);
 
 	add_header(packet, "From:", buf, SIP_HEAD_FROM);
 
-	
-	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL) 
-		goto out;
-	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL)
-		goto out;
-
-	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+	copy_header(from, SIP_HEAD_CALLERID, packet, SIP_HEAD_CALLERID);
+	copy_header(from, SIP_HEAD_CSEQ, packet, SIP_HEAD_CSEQ);
 
 	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
 	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
@@ -1964,30 +2023,12 @@ reply_internal_error(struct cfg *cfg, struct sipconn *sc)
 	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s", sc->laddress);
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
 
-	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
-		goto out;
-	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+	copy_header(from, SIP_HEAD_FROM, packet, SIP_HEAD_TO);
+	copy_header(from, SIP_HEAD_TO, packet, SIP_HEAD_FROM);
+	copy_header(from, SIP_HEAD_CALLERID, packet, SIP_HEAD_CALLERID);
+	copy_header(from, SIP_HEAD_CSEQ, packet, SIP_HEAD_CSEQ);
+	copy_header(from, SIP_HEAD_CONTACT, packet, SIP_HEAD_CONTACT);
 
-	if ((sd = find_header(from, SIP_HEAD_TO)) == NULL)
-		goto out;
-	add_header(packet, "From:", sd->fields, SIP_HEAD_FROM);
-
-	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
-		goto out;
-	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL)
-		goto out;
-	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
-
-	if ((sd = find_header(from, SIP_HEAD_CONTACT)) == NULL)
-		goto out;
-	add_header(packet, "Contact:", sd->fields, SIP_HEAD_CONTACT);
-
-#if 0
-	add_header(packet, "Content-Type:", " application/sdp\r\n", 
-		SIP_HEAD_CONTENTTYPE);
-#endif
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
@@ -2054,30 +2095,11 @@ reply_4xx(struct sipconn *sc, int code)
 	snprintf(buf, sizeof(buf), " SIP/2.0/UDP %s", sc->laddress);
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
 
-	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
-		goto out;
-	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
-
-	if ((sd = find_header(from, SIP_HEAD_TO)) == NULL)
-		goto out;
-	add_header(packet, "From:", sd->fields, SIP_HEAD_FROM);
-
-	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
-		goto out;
-	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL)
-		goto out;
-	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
-
-	if ((sd = find_header(from, SIP_HEAD_CONTACT)) == NULL)
-		goto out;
-	add_header(packet, "Contact:", sd->fields, SIP_HEAD_CONTACT);
-
-#if 0
-	add_header(packet, "Content-Type:", " application/sdp\r\n", 
-		SIP_HEAD_CONTENTTYPE);
-#endif
+	copy_header(from, SIP_HEAD_FROM, packet, SIP_HEAD_TO);
+	copy_header(from, SIP_HEAD_TO, packet, SIP_HEAD_FROM);
+	copy_header(from, SIP_HEAD_CALLERID, packet, SIP_HEAD_CALLERID);
+	copy_header(from, SIP_HEAD_CSEQ, packet, SIP_HEAD_CSEQ);
+	copy_header(from, SIP_HEAD_CONTACT, packet, SIP_HEAD_CONTACT);
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
@@ -2138,22 +2160,14 @@ reply_proxy_authenticate(struct cfg *cfg, struct sipconn *sc)
 		sc->laddress, sc->branchid);
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
 
-	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
-		goto out;
-	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
+	copy_header(from, SIP_HEAD_FROM, packet, SIP_HEAD_TO);
 
 	snprintf(buf, sizeof(buf), " \"Anonymous\" <someone@%s>;tag=%lld\r\n", 
 		sc->laddress, packet->id);
 	add_header(packet, "From:", buf, SIP_HEAD_FROM);
 
-	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
-		goto out;
-	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
-		goto out;
-	}
-	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
+	copy_header(from, SIP_HEAD_CALLERID, packet, SIP_HEAD_CALLERID);
+	copy_header(from, SIP_HEAD_CSEQ, packet, SIP_HEAD_CSEQ);
 
 	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
 	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
@@ -2545,25 +2559,11 @@ authenticate(struct cfg *cfg, struct sipconn *sc)
 		sc->laddress, sc->branchid);
 	add_header(packet, "Via:", buf, SIP_HEAD_VIA);
 
-	if ((sd = find_header(from, SIP_HEAD_FROM)) == NULL)
-		goto out;
-	add_header(packet, "To:", sd->fields, SIP_HEAD_TO);
-
-	if ((sd = find_header(from, SIP_HEAD_TO)) == NULL)
-		goto out;
-	add_header(packet, "From:", sd->fields, SIP_HEAD_FROM);
-
-	if ((sd = find_header(from, SIP_HEAD_CALLERID)) == NULL)
-		goto out;
-	add_header(packet, "Call-ID:", sd->fields, SIP_HEAD_CALLERID);
-
-	if ((sd = find_header(from, SIP_HEAD_CSEQ)) == NULL) {
-		goto out;
-	}
-	add_header(packet, "CSeq:", sd->fields, SIP_HEAD_CSEQ);
-
-	snprintf(buf, sizeof(buf), " <sip:anonymous@%s\r\n", sc->laddress);
-	add_header(packet, "Contact:", buf, SIP_HEAD_CONTACT);
+	copy_header(from, SIP_HEAD_FROM, packet, SIP_HEAD_TO);
+	copy_header(from, SIP_HEAD_TO, packet, SIP_HEAD_FROM);
+	copy_header(from, SIP_HEAD_CALLERID, packet, SIP_HEAD_CALLERID);
+	copy_header(from, SIP_HEAD_CSEQ, packet, SIP_HEAD_CSEQ);
+	copy_header(from, SIP_HEAD_CONTACT, packet, SIP_HEAD_CONTACT);
 
 	SLIST_INSERT_HEAD(&sc->packets, packet, entries);
 
