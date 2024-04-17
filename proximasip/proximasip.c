@@ -279,7 +279,7 @@ int copy_header(struct parsed *, int, struct parsed *, int);
 struct sipdata * find_header(struct parsed *, int);
 int listen_proxima(struct cfg *, fd_set *);
 void timeout_proxima(struct cfg *);
-void proxima_work(struct cfg *, struct sipconn *);
+int proxima_work(struct cfg *, struct sipconn *);
 void delete_sc(struct cfg *, struct sipconn *);
 struct sipconn * copy_sc(struct cfg *, struct sipconn *);
 struct sipconn * proxima(struct cfg *, fd_set *);
@@ -521,9 +521,9 @@ main(int argc, char *argv[])
 			continue;
 
 		if ((sc = proxima(&cfg, &rset)) != NULL) {
-			proxima_work(&cfg, sc);
-
-			/* can't use sc anymore because it could be gone */
+			if (proxima_work(&cfg, sc) == -1) {
+				continue;
+			}
 		}
 	
 		if (FD_ISSET(cfg.icmp, &rset)) {
@@ -720,7 +720,7 @@ proxima(struct cfg *cfg, fd_set *rset)
  */
 
 
-void
+int
 proxima_work(struct cfg *cfg, struct sipconn *sc)
 {
 	struct sipconn *sc_c; 
@@ -731,21 +731,21 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 
 	if (parse_payload(sc) == -1) {
 		my_syslog(LOG_DEBUG, "parse_payload failure, skip\n");
-		return;
+		return -1;
 	}
 
 	if (check_rfc3261(sc, &siperr) < 0) {
 		my_syslog(LOG_INFO, "not a SIP packet, or format error %d from %s\n", siperr, sc->address);
-		goto terminate;
+		return -1;
 	}
 
 	packets = SLIST_FIRST(&sc->packets);
 	if (packets == NULL)
-		return;
+		return -1;
 	
 	len = comp_payload(packets, sc->inbuf, sc->inbuflen);
 	if (len < 0) {
-		return;
+		return -1;
 	}
 
 	my_syslog(LOG_DEBUG, "entering state logic, state=%d, method=%d", 
@@ -759,16 +759,16 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 			} else if (sc->internal && sc->auth) {
 				/* we're not a outgoing proxy so rip it dunn */
 				reply_4xx(sc, 404);
-				goto terminate;
+				sc->state = STATE_TERMINATED;
 			} else {
 				if ((sc_c = try_proxy(cfg, sc)) == NULL) {
 					/* tear it all down, if this fails */
 					reply_internal_error(cfg, sc);
-					goto terminate;
-				} 
-
-				reply_trying(cfg, sc_c);
-				sc->state = STATE_PROCEEDING;
+					sc->state = STATE_TERMINATED;
+				} else {
+					reply_trying(cfg, sc_c);
+					sc->state = STATE_PROCEEDING;
+				}
 			}
 		} else if (sc->method == METHOD_REGISTER) {
 			if (sc->internal) {
@@ -776,12 +776,12 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 			} else {
 				/* we're getting a REGISTER from outside */
 				reply_4xx(sc, 403);	/* forbidden */
-				goto terminate;
+				sc->state = STATE_TERMINATED;
 			}
 		} else {
 			/* reply some negative num? */
 			reply_internal_error(cfg, sc);
-			goto terminate;
+			sc->state = STATE_TERMINATED;
 		}
 		break;
 	case STATE_PROCEEDING:
@@ -790,33 +790,34 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 				reply_proxy_authenticate(cfg, sc);
 			} else if (sc->internal && sc->auth) {
 				reply_4xx(sc, 404);
-				goto terminate;
+				sc->state = STATE_TERMINATED;
 			} else {
 				/* we are entirely external */
 
 				/* this is likely a resend for an INVITE */
 				/* XXX tear it down for now */
 				reply_internal_error(cfg, sc);
-				goto terminate;
+				sc->state = STATE_TERMINATED;
 			}
 		} else {
 			/* shut 'er down */
-			goto terminate;
+			sc->state = STATE_TERMINATED;
 		}
 		break;
 	case STATE_COMPLETED:
 		sc->state = STATE_TERMINATED;
 		break;
 	case STATE_TERMINATED:
+		sc->state = STATE_TERMINATED;
 		break;
 	default:
 		break;
 	}
 
-	return;
+	if (sc->state == STATE_TERMINATED)
+		return -1;
 
-terminate:
-	sc->state = STATE_TERMINATED;
+	return 0;
 }
 
 
