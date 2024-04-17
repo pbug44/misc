@@ -1031,19 +1031,23 @@ err:
 void
 destroy_payload(struct parsed *parser)
 {
-	struct sipdata *n1 = SLIST_FIRST(&parser->data);
+	struct sipdata *n1;
 
-	if (n1 == NULL)
+	if (SLIST_EMPTY(&parser->data))
 		return;
 
 	do {
-	     if (n1->fieldlen)
-	     	free(n1->fields);
-	     if (n1->replacelen)
-		free(n1->replace);
-             SLIST_REMOVE_HEAD(&parser->data, entries);
-             free(n1);
-	} while ((n1 = SLIST_FIRST(&parser->data)) != NULL);
+		n1 = SLIST_FIRST(&parser->data)) != NULL);
+
+		if (n1->fieldlen)
+			free(n1->fields);
+
+		if (n1->replacelen)
+			free(n1->replace);
+
+		SLIST_REMOVE_HEAD(&parser->data, entries);
+		free(n1);
+	} while (! SLIST_EMPTY(&parser->data));
 }
 
 struct sipdata *
@@ -1596,16 +1600,17 @@ delete_sc(struct cfg *cfg, struct sipconn *sc)
 {		
 	struct parsed *packets;
 
-	if ((packets = SLIST_FIRST(&sc->packets)) == NULL) { 
+	if (SLIST_EMPTY(&sc->packets)) {
 		return;
 	}
 
 	do {
+		packets = SLIST_FIRST(&sc->packets);
 		destroy_payload(packets);	
 		SLIST_REMOVE_HEAD(&sc->packets, entries);
 		free(packets);
 		
-	} while ((packets = SLIST_FIRST(&sc->packets)) != NULL);
+	} while (! SLIST_EMPTY(&sc->packets));
 
 	free(sc->address);
 	sc->address = NULL;
