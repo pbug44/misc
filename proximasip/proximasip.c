@@ -444,7 +444,8 @@ main(int argc, char *argv[])
 
 	SLIST_INIT(&cfg.connection);
 
-	/* set up default listening socket */
+	/* leave delphinusdns.org here for now, finds the gateway interface */
+	/* XXX yes I know it phones home */
 	if (add_socket(&cfg, LISTENPORT, "delphinusdns.org", 5060, BIND_PORT_EXT) == NULL) {
 		exit(1);
 	}
