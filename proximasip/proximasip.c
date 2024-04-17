@@ -1031,17 +1031,19 @@ err:
 void
 destroy_payload(struct parsed *parser)
 {
-	struct sipdata *n1;
+	struct sipdata *n1 = SLIST_FIRST(&parser->data);
 
-	while (!SLIST_EMPTY(&parser->data)) {
-             n1 = SLIST_FIRST(&parser->data);
+	if (n1 == NULL)
+		return;
+
+	do {
 	     if (n1->fieldlen)
 	     	free(n1->fields);
 	     if (n1->replacelen)
 		free(n1->replace);
              SLIST_REMOVE_HEAD(&parser->data, entries);
              free(n1);
-	}
+	} while ((n1 = SLIST_FIRST(&parser->data)) != NULL);
 }
 
 struct sipdata *
@@ -1588,16 +1590,24 @@ timeout_proxima(struct cfg *cfg)
 void
 delete_sc(struct cfg *cfg, struct sipconn *sc)
 {		
-	struct parsed *packets = SLIST_FIRST(&sc->packets);
+	struct parsed *packets;
 
-	if (packets != NULL) { 
-		destroy_payload(packets);	
+	if ((packets = SLIST_FIRST(&sc->packets)) == NULL) { 
+		return;
 	}
 
-	free(packets);
+	do {
+		destroy_payload(packets);	
+		SLIST_REMOVE_HEAD(&sc->packets, entries);
+		free(packets);
+		
+	} while ((packets = SLIST_FIRST(&sc->packets)) != NULL);
+
 	free(sc->address);
+	sc->address = NULL;
 	SLIST_REMOVE(&cfg->connection, sc, sipconn, entries);
-	
+
+	free(sc);
 }
 
 void
