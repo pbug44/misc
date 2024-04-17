@@ -317,6 +317,7 @@ main(int argc, char *argv[])
 	int no_icmp = 0;
 
 	char *buf = NULL;
+	char *p = NULL;
 	char myname[256];
 
 	struct cfg cfg;
@@ -638,6 +639,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 					(char *)&address, sizeof(address));
 				rsc = add_socket(cfg, LISTENPORT,address,ntohs(psin6->sin6_port), NO_BIND);
 				if (rsc) {
+					rsc->parent = sc;
 					rsc->address = strdup(address);
 					if (rsc->address == NULL) {
 						syslog(LOG_INFO, "strdup: %m");
@@ -657,6 +659,7 @@ proxima(struct cfg *cfg, fd_set *rset)
 
 				rsc = add_socket(cfg, LISTENPORT, address, ntohs(psin->sin_port), NO_BIND);
 				if (rsc) {
+					rsc->parent = sc;
 					rsc->address = strdup(address);
 					if (rsc->address == NULL) {
 						syslog(LOG_INFO, "strdup: %m");
