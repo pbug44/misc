@@ -2641,7 +2641,6 @@ my_syslog(int priority, char *fmt, ...)
 	va_start(ap, fmt);
 	if (debug) {
 		vfprintf(stderr, fmt, ap);
-		fprintf(stderr, "\n");
 	}
 	if (priority != LOG_DEBUG)
 		vsyslog(priority, fmt, ap);	
