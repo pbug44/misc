@@ -729,8 +729,8 @@ proxima_work(struct cfg *cfg, struct sipconn *sc)
 
 	sc->activity = time(NULL);
 
-	if (parse_payload(sc) < 0) {
-		fprintf(stderr, "parse_payload failure, skip\n");
+	if (parse_payload(sc) == -1) {
+		my_syslog(LOG_DEBUG, "parse_payload failure, skip\n");
 		return;
 	}
 
@@ -1549,7 +1549,7 @@ timeout_proxima(struct cfg *cfg)
 
 		/* do actions */
 
-		if (sc->state & STATE_TRYING) {
+		if (sc->state == STATE_TRYING) {
 			/* this is when we just got the INVITE or NON-INVITE */
 			if (sc->flags & INVITE_TIMEOUT) {
 				delete_sc(cfg, sc);
@@ -1562,7 +1562,7 @@ timeout_proxima(struct cfg *cfg)
 				sc->flags &= ~(INVITE_RESPONSE_RETRANSMIT);
 			}
 
-		} else if (sc->state & STATE_PROCEEDING) {
+		} else if (sc->state == STATE_PROCEEDING) {
 			/* this is when we're Ringing */
 			if (sc->flags & INVITE_TIMEOUT) {
 				delete_sc(cfg, sc);
@@ -1571,10 +1571,12 @@ timeout_proxima(struct cfg *cfg)
 				delete_sc(cfg, sc);
 				sc->flags &= ~(PROXY_INVITE_TIMEOUT);
 			} 
-		} else if (sc->state & STATE_COMPLETED) {
+		} else if (sc->state == STATE_COMPLETED) {
 			/* this is when we got ACK'ed to the 4 way handshake */
 
 		} else {
+			if ((sc->state == 0) || (sc->state == -1))
+				return;
 			/* we're in terminated mode delete transaction */
 			delete_sc(cfg, sc);
 		}
