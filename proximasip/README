@@ -1,1 +1,79 @@
-proximasip.c - A small sip proxy 
+proximasip.c - A small stateful sip proxy based on RFC 3261
+
+From pjp@delphinusdns.org Mon Apr 15 07:52:57 2024
+Date: Mon, 15 Apr 2024 07:52:57 +0200
+From: "Peter J. Philipp" <pjp@delphinusdns.org>
+To: @mailinglist
+Subject: sip proxy (I'm starting one)
+
+Hi,
+
+In this mail:  https://marc.info/?l=openbsd-misc&m=170759396512738&w=2
+
+I asked people what sip proxy they use.  And got feedback, thank you!
+However after a short code-reading of the software mentioned I became
+distraught and want to do my own.  I have worked on this saturday and
+sunday and it's taking shape, based on another transparent proxy of mine
+called sipdiv.c:  The code is here:
+
+[This website]
+
+Right now the skeleton is finished, it pledges, chroot, privseps and unveils
+and sets up sockets, as well as creating a rudamentary state.  This week
+I'm going to develop on this a little more along side of the risc-v project
+that I'm also working on.  My systems caused me a bit of sysadmin last week,
+so I couldn't get started on either too much.
+
+So for proximasip.c here are my immediate goals:
+
+1. allow incoming sip calls, proxied to the fritz!box that I use for my phones
+2. UDP only at first TLS (sips) later
+3. this proxy will be stateful, so the state machine will have to be programmed
+
+To reach these goals I'm hoping to get this working (possibly without tls) by
+end of month, at which an old project is calling me back to do work.  So in
+May I'm reprioritizing.
+
+I invite you to help.  If you're interested in SIP on a VPS tunneled to home,
+then this may be for you.  As I'm developing this with github, you're invited
+to fork and cause pull requests.  Though commits may happen quicker initially
+than later when there is a debug to make it all work.  I haven't given RTP
+much thought yet, I may use a pf rule to make it work.
+
+Here is my setup:
+
+[superpod.delphinusdns.org]     <---- this is where the proximasip proxy is on
+            |
+            |
+            |   <---- this is a wireguard tunnel inside IPSEC to tunnel things
+                        home
+            |
+            |
+        [stern (router)] <-- this is riscv64 gateway at my ISP it is vlan'ing
+            |                   everything and has the transparent sipdiv.c
+            |                   proxy to shorten SIP UDP packets for talking
+            |                   with my parents fritz!box on another network
+            |
+        [AVM fritzbox]  <-- This is an old AVM 7390 that is my Wifi and SIP
+            |                   gateway.  The DSL modem in it is not connected.
+            |                   It will eventually register to proximasip proxy 
+            |
+        [2 telephones]  <-- older SIP telephones (Aastra and Grandstream)
+
+
+Since the fritzbox has a default profile registered to my parents fritzbox via
+superpod, I'm going to make a new profile on it for registering to proximasip.
+It will only accept inbound calls eventually and outbound calls will go through
+parents and eventually the PSTN.
+
+I could have installed a kamailio in proximasip's place but I lack the config
+skills and I don't want it to waste my time.  Better write something anew and
+know it's safetied.
+
+Once it's ready to receive I'm going to install a sip.callpeter.tel record with
+SRV to a non-standard port (in order to evade automated voicemail sip bots).
+Right now I've picked 12345/udp but I seem to recall that's some P2P botnet,
+I may change it in time.
+
+Best Regards,
+-pjp
