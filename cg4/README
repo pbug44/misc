@@ -1,0 +1,10 @@
+This is research on recovering the key given a plaintext crib "plaintext", such
+as "GET /long/url HTTP/1.1"
+    01234567890123456	  <--- you get my drift.
+
+I wrote this in order to crack my own youtube captures that I've been saving.
+
+So you're given the plaintext, and the ciphertext.  You don't know the key
+but that cracking will take a bit of time on limited resources.
+
+-pjp (I love you)
