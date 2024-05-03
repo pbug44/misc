@@ -13,9 +13,12 @@
 
 #include "rijndael.h"
 
+#define MEMSIZE	(2UL * 1024 * 1024 * 1024)
+#define NUMCORES	1
+
 void display(int round, u32 *rk);
 void inverse_function(u32 *rk3, int);
-void ptct2_rk11(u32 *, int, u8 pt[16], u8 ct[16]);
+void ptct2_rk11(u32 *, int, u8 *, u8 *, u_char *, size_t);
 void reverse_test(void);
 void Mix(u32 *rk);
 
@@ -1197,28 +1200,7 @@ rijndael_encrypt(rijndael_ctx *ctx, const u_char *src, u_char *dst)
 int
 main(int argc, char *argv[])
 {
-	int blocksize = 0;
-	/* uint32_t key[4] = { 0x01020304,0x01020304,0x01020304,0x01020304 }; */
-	uint32_t key[4] = { 0x0000000,0xffffffff,0xffffffff,0xffffffff };
-	uint32_t rk[56];
-	
-	u_char plain[16];
-	u_char cipher[16];
-
-	uint8_t *pp, *pc;
-	int i, ch;
-
-	EVP_CIPHER_CTX *evpctx;
-	EVP_CIPHER *ec;
-
-	fd = open("/ram/output", O_CREAT | O_WRONLY | O_TRUNC, 0600);
-	if (fd == -1) {
-		perror("open");
-		exit(1);
-	}
-
 	reverse_test();
-
 	exit(0);
 }
 
@@ -1316,13 +1298,13 @@ reverse_test(void)
 	u32 rk[64];
 	u32 rk2[64];
 	int i;
-	uint32_t *mem;
+	u_char *mem;
 
-#if 0
-	mem = (uint32_t *)calloc((4 * 1024 * 1024), 1024);
-	if (mem == NULL)
+	mem = (u_char *)malloc(MEMSIZE);
+	if (mem == NULL) {
+		perror("malloc");
 		exit(1);
-#endif
+	}
 
 	memset((char *)&rk, 0, sizeof(rk));
 	memset((char *)&rk2, 0, sizeof(rk2));
@@ -1340,8 +1322,10 @@ reverse_test(void)
 	ec = (EVP_CIPHER*)EVP_aes_128_ecb();	
 
 	evpctx = EVP_CIPHER_CTX_new();
-	if (evpctx == NULL)
+	if (evpctx == NULL) {
+		fprintf(stderr, "EVP_CIPHER_CTX_new()::\n");
 		exit(1);
+	}
 
 	EVP_CIPHER_CTX_init(evpctx);
 
@@ -1359,7 +1343,7 @@ reverse_test(void)
 	EVP_Cipher(evpctx, (u_char*)&cipher, (u_char *)plain, blocksize);
 #endif
 
-	ptct2_rk11(rk, 11, (u8 *)plain, (u8 *)cipher);
+	ptct2_rk11(rk, 11, (u8 *)plain, (u8 *)cipher, mem, MEMSIZE);
 
 	printf("key   : ");
 	display(-1, &key[0]);
@@ -1384,17 +1368,63 @@ reverse_test(void)
 }
 
 void
-ptct2_rk11(u32 rk[/*4*(Nr + 1)*/], int Nr, u8 pt[16], u8 ct[16])
+ptct2_rk11(u32 rk[/*4*(Nr + 1)*/], int Nr, u8 *pt, u8 *ct, u_char *mem, size_t memsize)
 {
 	u32 s0, s1, s2, s3;
 	uint64_t x, limit = 0xffffffffULL + 1;
+	uint64_t task;
+	u_char *p = mem, *q;
+
+	EVP_CIPHER_CTX *evpctx;
+	EVP_CIPHER *ec;
+	int blocksize = 0;
+	u32 cipher[4];
+	int i;
+	int cpu;
+	pid_t pid;
+
+	ec = (EVP_CIPHER*)EVP_aes_128_ecb();	
+
+	evpctx = EVP_CIPHER_CTX_new();
+	if (evpctx == NULL) {
+		fprintf(stderr, "EVP_CIPHER_CTX_new()::\n");
+		exit(1);
+	}
+
+	EVP_CIPHER_CTX_init(evpctx);
+
+	blocksize = EVP_CIPHER_block_size(ec);
 
 	RPUTU32(s0, (ct + 0));
 	RPUTU32(s1, (ct + 4));
 	RPUTU32(s2, (ct + 8));
 	RPUTU32(s3, (ct + 12));
 
-	for (x = 0; x < limit; x++) {
+	if (NUMCORES >= 1) {
+		task = limit / NUMCORES;
+		for (i = 0; i < NUMCORES; i++) {
+			pid = fork();
+			switch (pid) {
+			case -1:
+				exit(1);
+			case 0:
+				/* child */
+				goto work;
+			default:
+				break;
+			}
+		}
+
+		for (;;)
+			sleep(1);
+
+		exit(0);
+	}
+
+work:
+	cpu = i;
+
+	for (x = (task * cpu); x < (task * (cpu + 1)); x++) {
 		memset(rk, 0, (4 * 64));
 		rk[(Nr * 4) + 3] =
 			(Te2[(x >> 24) & 0xff] & 0xff000000) ^
@@ -1424,12 +1454,31 @@ ptct2_rk11(u32 rk[/*4*(Nr + 1)*/], int Nr, u8 pt[16], u8 ct[16])
 
 		inverse_function(&rk[0], Nr - 1);
 
-		write(fd, (char *)rk, 0xd0);
-#if 0
-		for (int i = 0; i < 64 ; i++) {
-			display(i, &rk[i * 4]);
+
+		memcpy(p, (char *)rk, 0xd0);
+		p += 0xd0;
+
+		if ((p - mem) >= (memsize - 4096)) {
+			for (q = mem; q < p; q += 0xd0)	{
+				EVP_EncryptInit(evpctx, ec, NULL, NULL);
+				EVP_CIPHER_CTX_set_key_length(evpctx, 16);
+				EVP_EncryptInit(evpctx, NULL, (u_char*)q, NULL);
+				
+				
+				EVP_Cipher(evpctx, (u_char*)&cipher, (u_char *)pt, blocksize);
+
+				if (memcmp((char *)ct, (char *)&cipher, 16) == 0) {
+					printf("found key, displaying\n");
+					for (i = 0; i < 64 ; i++) {
+						display(i, (u32 *)q);
+					}
+					printf("\n");
+					exit(0);
+				}
+			}
+
+			p = mem;
 		}
-		printf("\n");
-#endif
+		
 	}
 }
