@@ -1,4 +1,5 @@
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -14,7 +15,7 @@
 #include "rijndael.h"
 
 #define MEMSIZE	(2UL * 1024 * 1024 * 1024)
-#define NUMCORES	1
+#define NUMCORES	2
 
 void display(int round, u32 *rk);
 void inverse_function(u32 *rk3, int);
@@ -1309,11 +1310,7 @@ reverse_test(void)
 	memset((char *)&rk, 0, sizeof(rk));
 	memset((char *)&rk2, 0, sizeof(rk2));
 
-
-
-	printf("* this is a function I reversed from rijndaelKeySetupEnc()\n");
-	printf("* to fill the rk (round key?) from any rounded position\n");
-	printf("* usually this gets fed the given key in rijndaelKeySetupEnc()\n");
+	printf("cg4 - searching for a particular key that is random...\n");
 	
 	uint32_t key[4]; 
 	uint32_t plain[4] = { 0xaaaaaaaa, 0xaaaaaaaa, 0xaaaaaaaa, 0xaaaaaaaa };
@@ -1334,17 +1331,16 @@ reverse_test(void)
 	memset((u_char *)&plain, 0xAA, sizeof(plain));
 	arc4random_buf((u_char *)&key, 16);
 
-#if 1
 	EVP_EncryptInit(evpctx, ec, NULL, NULL);
 	EVP_CIPHER_CTX_set_key_length(evpctx, 16);
 	EVP_EncryptInit(evpctx, NULL, (u_char*)&key, NULL);
 	
 	
 	EVP_Cipher(evpctx, (u_char*)&cipher, (u_char *)plain, blocksize);
-#endif
 
 	ptct2_rk11(rk, 11, (u8 *)plain, (u8 *)cipher, mem, MEMSIZE);
 
+#if 0
 	printf("key   : ");
 	display(-1, &key[0]);
 	printf("plain : ");
@@ -1363,13 +1359,19 @@ reverse_test(void)
 	for (i = 0; i <= 12 ; i++) {
 		display(i, &rk2[i * 4]);
 	}
-	printf("\n");
+#endif
+
+	printf("not found, sorry peter, better luck next attempt\n");
+	exit(1);
 
 }
 
 void
 ptct2_rk11(u32 rk[/*4*(Nr + 1)*/], int Nr, u8 *pt, u8 *ct, u_char *mem, size_t memsize)
 {
+	char buf[512];
+	int status;
+
 	u32 s0, s1, s2, s3;
 	uint64_t x, limit = 0xffffffffULL + 1;
 	uint64_t task;
@@ -1415,14 +1417,18 @@ ptct2_rk11(u32 rk[/*4*(Nr + 1)*/], int Nr, u8 *pt, u8 *ct, u_char *mem, size_t m
 			}
 		}
 
-		for (;;)
-			sleep(1);
-
+		setproctitle("waiting parent");
+		pid = wait(&status);
+		printf("exiting waiting parent\n");
 		exit(0);
 	}
 
 work:
 	cpu = i;
+	snprintf(buf, sizeof(buf), "cpu%d working on task %llu to %llu", 
+		cpu, (task * cpu), task * (cpu + 1));
+
+	setproctitle("%s", buf);
 
 	for (x = (task * cpu); x < (task * (cpu + 1)); x++) {
 		memset(rk, 0, (4 * 64));
