@@ -1572,9 +1572,6 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key)
 	u32 hits;
 	u32 oldmax = 0;
 
-	struct entry find, *res, *res0;
-	struct stat sb;
-
 	u32 rem = 0, temp;
 	int i = (Nr * 4), r;
 	int Nr2;
