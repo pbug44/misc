@@ -15,4 +15,13 @@ the first block.  So entirely guessable.
 As mitigations a webmaster can perhaps make random URLS to lengthen the first
 block and make it less guessable?
 
+If this can crack AES on an Ampere Altra core in 30 min.  Then cracking on
+a rented Ampere Altra cloud server at Hetzner with 128 cores utilized will
+cost less than a cent per minute, running for an hour.  Compare that with
+cracking enigma in 13 minutes on 2000 droplets on Digital Ocean, for $7.
+
+https://www.digitalocean.com/blog/how-2000-droplets-broke-the-enigma-code-in-13-minutes
+
+I say gosh!
+
 -pjp (I love you)

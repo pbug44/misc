@@ -21,6 +21,9 @@ void inverse_function(u32 *rk3, int);
 void reverse_test(void);
 void Mix(u32 *rk);
 
+/* this counter uniqs per row 16 characters per row 256 possibility per char */
+static u32 counter[4096];		/* 256 * 16 */
+
 static const u32 Te0[256] = {
     0xc66363a5U, 0xf87c7c84U, 0xee777799U, 0xf67b7b8dU,
     0xfff2f20dU, 0xd66b6bbdU, 0xde6f6fb1U, 0x91c5c554U,
@@ -1615,6 +1618,8 @@ work:
 	printf("%s\n", buf);
 	setproctitle("%s", buf);
 
+	memset(&counter, 0, sizeof(counter));
+
 	for (x = (task * cpu); x < (task * (cpu + 1)); x++) {
 
 	// 62b991a3,253c2425,a8936d37,0666599b
@@ -1684,6 +1689,24 @@ skip:
 		mod((u32 *)&rk3, Nr2, ptv, &ct2, &v);
 		//rijndaelEncrypt(&rk3, Nr2, ptv, &ct2);
 
+		for (i = 0; i < 16; i++) {
+			uint64_t hi, lo, *shv;
+
+			hi = ((uint64_t)(rk3[1] & 0xffffffff) << 32) | \
+				(rk3[0] & 0xffffffff);
+			lo = ((uint64_t)(rk3[3] & 0xffffffff) << 32) | \
+				(rk3[2] & 0xffffffff);
+
+			if (i < 8)
+				shv = &hi;
+			else
+				shv = &lo;
+				
+			*shv = (*shv >> ((i % 8) * 8)) & 0xff;
+
+			counter[*shv * i]++;
+		}
+
 		if (memcmp((char *)&x, (char *)&v[0], 4) == 0) {
 
 			printf("found key candidate task #%llu(%llX), displaying\n", x, x);
@@ -1693,4 +1716,27 @@ skip:
 			printf("\n");
 		}
             }
+
+#if 0
+		printf("is this the key? or partially?\n");
+		for (int max = 0, i = 0; i < 16; i++) {
+			for (int j = 0, max = 0; j < 256; j++) {
+				if (counter[i * j] > counter[max * i])
+					max = j;
+			}
+
+			printf("%02x", max & 0xff);
+		}
+#endif
+
+#if 1
+		printf("dumping debug\n");
+		for (i = 0; i < 16; i++) {
+			for (int j = 0; j < 256; j++) {
+				fprintf(stderr, "%02x/%u,", j & 0xff, counter[i * j]);
+			}
+
+		}
+#endif
+		fprintf(stderr, "\n");
 }
