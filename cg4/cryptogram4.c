@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/tree.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -13,13 +14,31 @@
 
 #include "rijndael.h"
 
-#define NUMCORES 2
+#define NUMCORES 1
 
-void gosh(u32 *rk, int Nr, const void *pt, const void *ct, char *key);
+void gosh(u32 *, int, const void *, const void *, char *, int);
 void display(int round, u32 *rk);
 void inverse_function(u32 *rk3, int);
-void reverse_test(void);
+void reverse_test(int);
 void Mix(u32 *rk);
+
+char *file = "isochars";
+
+struct entry {
+        RB_ENTRY(entry) entries;
+        uint8_t val;
+} *tr0, *tr1;
+
+int
+intcmp(struct entry *e1, struct entry *e2)
+{
+        return (e1->val < e2->val ? -1 : e1->val > e2->val);
+}
+
+RB_HEAD(inttree, entry) head = RB_INITIALIZER(&head);
+RB_PROTOTYPE(inttree, entry, entries, intcmp)
+RB_GENERATE(inttree, entry, entries, intcmp)
+
 
 /* this counter uniqs per row 16 characters per row 256 possibility per char */
 static u32 counter[4096];		/* 256 * 16 */
@@ -1210,7 +1229,55 @@ rijndael_encrypt(rijndael_ctx *ctx, const u_char *src, u_char *dst)
 int
 main(int argc, char *argv[])
 {
-	reverse_test();
+	struct entry *et;
+	int ch;
+	int mode = 0;
+	char buf[512];
+	FILE *f;
+
+	while ((ch = getopt(argc, argv, "2")) != -1) {
+		switch (ch) {
+		case '2':
+			mode = 2;
+			break;	
+		case 'f':
+			file = optarg;
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (mode) {
+		f = fopen(file, "r");
+		if (f == NULL) {
+			errx(1, "%s", file);
+		}
+
+		while (fgets(buf, sizeof(buf), f) != NULL) {
+			char *ep;
+			int len;
+
+			if (buf[0] == '\n')
+				continue;
+
+			len = strlen(buf);
+			if (buf[len - 1] == '\n')
+				buf[len - 1] = '\0';
+
+			et = malloc(sizeof(struct entry));
+			if (et == NULL) {
+				perror("malloc");
+				exit(1);
+			}
+
+			et->val = strtol(buf, &ep, 16);
+
+			RB_INSERT(inttree, &head, et);
+		}
+	}
+
+	reverse_test(mode);
 	exit(0);
 }
 
@@ -1494,7 +1561,7 @@ rijndaelEncrypt(const u32 rk[/*4*(Nr + 1)*/], int Nr, const u8 pt[16],
 }
 
 void
-reverse_test(void)
+reverse_test(int mode)
 {
 	u32 rk[64];
 	u32 rk2[64];
@@ -1524,10 +1591,9 @@ reverse_test(void)
 	}
 	printf("\n");
 
-#if 1
 	rijndaelEncrypt((u32 *)&rk2, Nr, plain, cipher);
-#endif
 
+#if 0
 	printf("after encrypt\n");
 	for (i = 0; i <= 12 ; i++) {
 		display(i, &rk2[i * 4]);
@@ -1543,6 +1609,7 @@ reverse_test(void)
 		display(i, &rk3[i * 4]);
 	}
 	printf("\n");
+#endif
 
 	printf("key   : ");
 	display(-1, &key[0]);
@@ -1551,13 +1618,13 @@ reverse_test(void)
 	printf("cipher: ");
 	display(-1, cipher);
 
-	gosh(&rk2[0], Nr, plain, cipher, &key[0]);
+	gosh(&rk2[0], Nr, plain, cipher, &key[0], mode);
 
 	exit(1);
 
 }
 void
-gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key)
+gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 {
 	u32 rk2[64];
 	u32 rk3[64];
@@ -1687,10 +1754,12 @@ skip:
 		memset(&rk3, 0, sizeof(rk3));
 		Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&rk[0], 128); 
 		mod((u32 *)&rk3, Nr2, ptv, &ct2, &v);
+
 		//rijndaelEncrypt(&rk3, Nr2, ptv, &ct2);
 
 		for (i = 0; i < 16; i++) {
 			uint64_t hi, lo, *shv;
+			struct entry *et, find;
 
 			hi = ((uint64_t)(rk3[1] & 0xffffffff) << 32) | \
 				(rk3[0] & 0xffffffff);
@@ -1703,6 +1772,13 @@ skip:
 				shv = &lo;
 				
 			*shv = (*shv >> ((i % 8) * 8)) & 0xff;
+			
+			memset(&find, 0, sizeof(find));
+			find.val = *shv;
+
+			et = RB_FIND(inttree, &head, &find);
+			if (et == NULL)
+				continue;
 
 			counter[*shv * i]++;
 		}
