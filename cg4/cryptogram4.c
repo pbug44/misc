@@ -1794,7 +1794,7 @@ work:
 			PUTU32((u8 *)&tbuf[12],rk[3]);
 
 			for (i = 0; i < 16; i++) {
-				for (int j = 1; j < 16; j++) {
+				for (int j = 0; j < 16; j++) {
 					sw = tbuf[j];
 					tbuf[j] = tbuf[i];
 					tbuf[i] = sw;
