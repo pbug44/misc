@@ -1275,6 +1275,8 @@ main(int argc, char *argv[])
 
 			RB_INSERT(inttree, &head, et);
 		}
+
+		fclose(f);
 	}
 
 	reverse_test(mode);
