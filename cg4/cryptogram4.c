@@ -1785,9 +1785,7 @@ work:
 		}
 
 		if (mode && tryencrypt) {
-			rijndaelEncrypt(&rk3, Nr2, ptv, &ct2);
-
-			if (memcmp((char *)&ct2[0], (char *)&ct[0], 16) == 0) {
+			if (memcmp((char *)&ct2[0], (char *)&ctv, 16) == 0) {
 
 				printf("found key, displaying\n");
 
