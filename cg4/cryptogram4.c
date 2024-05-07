@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <endian.h>
+#include <err.h>
 
 #include "rijndael.h"
 
@@ -1593,7 +1594,7 @@ reverse_test(int mode)
 	}
 	printf("\n");
 
-	rijndaelEncrypt((u32 *)&rk2, Nr, plain, cipher);
+	rijndaelEncrypt((u32 *)&rk2, Nr, (char *)plain, (char *)cipher);
 
 #if 0
 	printf("after encrypt\n");
@@ -1620,7 +1621,7 @@ reverse_test(int mode)
 	printf("cipher: ");
 	display(-1, cipher);
 
-	gosh(&rk2[0], Nr, plain, cipher, &key[0], mode);
+	gosh(&rk2[0], Nr, plain, (void *)cipher, (void *)&key[0], mode);
 
 	exit(1);
 
@@ -1754,7 +1755,7 @@ work:
 
 		memset(&rk3, 0, sizeof(rk3));
 		Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&rk[0], 128); 
-		mod((u32 *)&rk3, Nr2, ptv, &ct2, &v);
+		mod((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2, (u32 *)&v);
 
 		for (i = 0; i < 16; i++) {
 			uint64_t hi, lo, *shv;
@@ -1785,23 +1786,42 @@ work:
 		}
 
 		if (mode && tryencrypt) {
-			if (memcmp((char *)&ct2[0], (char *)&ctv, 16) == 0) {
+			u8 tbuf[16];
+			u8 sw;
+			PUTU32((u8 *)&tbuf[0], rk[0]);
+			PUTU32((u8 *)&tbuf[4], rk[1]);
+			PUTU32((u8 *)&tbuf[8], rk[2]);
+			PUTU32((u8 *)&tbuf[12],rk[3]);
 
-				printf("found key, displaying\n");
+			for (i = 0; i < 16; i++) {
+				for (int j = 1; j < 16; j++) {
+					sw = tbuf[j];
+					tbuf[j] = tbuf[i];
+					tbuf[i] = sw;
 
-				for (i = 0; i < 1 ; i++) {
-					display(i, &rk3[0]);
+					/* XXX this needs to utilize hardware encryption to really be speedy */
+					Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&tbuf[0], 128); 
+					rijndaelEncrypt((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2);
+					
+
+					if (memcmp((char *)&ct2[0], (char *)&ctv, 16) == 0) {
+
+						printf("found key, displaying\n");
+
+						for (i = 0; i < 1 ; i++) {
+							display(i, &rk3[0]);
+						}
+						printf("\n");
+						exit(0);
+					}
 				}
-				printf("\n");
-				exit(0);
 			}
 	
 			tryencrypt = 0;
 		}
-            }
+	}       
 
-#if 1
-		if (! mode) {
+	if (mode == 0) {
 		printf("dumping debug\n");
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
@@ -1809,7 +1829,6 @@ work:
 			}
 
 		}
-#endif
 		fprintf(stderr, "\n");
-		}
+	}
 }
