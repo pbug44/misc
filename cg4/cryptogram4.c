@@ -1647,7 +1647,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	u32 rem = 0, temp;
 	int i = (Nr * 4), r;
 	int Nr2;
-	int cpu;
+	int cpu, tryencrypt = 0;
 	uint8_t save;
 	pid_t pid;
 	u32 stats[32];
@@ -1746,7 +1746,6 @@ work:
 			(Te1[(t3 >>  0) & 0xff] & 0x000000ff) ^
 			s0;
 
-skip:
 		inverse_function(&rk[0], Nr);
 		rk[0] = htobe32(rk[0]);
 		rk[1] = htobe32(rk[1]);
@@ -1756,8 +1755,6 @@ skip:
 		memset(&rk3, 0, sizeof(rk3));
 		Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&rk[0], 128); 
 		mod((u32 *)&rk3, Nr2, ptv, &ct2, &v);
-
-		//rijndaelEncrypt(&rk3, Nr2, ptv, &ct2);
 
 		for (i = 0; i < 16; i++) {
 			uint64_t hi, lo, *shv;
@@ -1779,35 +1776,34 @@ skip:
 			find.val = *shv;
 
 			et = RB_FIND(inttree, &head, &find);
-			if (et == NULL)
+			if (et == NULL) {
+				tryencrypt = 1;
 				continue;
+			} 
 
 			counter[*shv * i]++;
 		}
 
-		if (memcmp((char *)&x, (char *)&v[0], 4) == 0) {
+		if (mode && tryencrypt) {
+			rijndaelEncrypt(&rk3, Nr2, ptv, &ct2);
 
-			printf("found key candidate task #%llu(%llX), displaying\n", x, x);
-			for (i = 0; i < 1 ; i++) {
-				display(i, &rk3[0]);
+			if (memcmp((char *)&ct2[0], (char *)&ct[0], 16) == 0) {
+
+				printf("found key, displaying\n");
+
+				for (i = 0; i < 1 ; i++) {
+					display(i, &rk3[0]);
+				}
+				printf("\n");
+				exit(0);
 			}
-			printf("\n");
+	
+			tryencrypt = 0;
 		}
             }
 
-#if 0
-		printf("is this the key? or partially?\n");
-		for (int max = 0, i = 0; i < 16; i++) {
-			for (int j = 0, max = 0; j < 256; j++) {
-				if (counter[i * j] > counter[max * i])
-					max = j;
-			}
-
-			printf("%02x", max & 0xff);
-		}
-#endif
-
 #if 1
+		if (! mode) {
 		printf("dumping debug\n");
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
@@ -1817,4 +1813,5 @@ skip:
 		}
 #endif
 		fprintf(stderr, "\n");
+		}
 }
