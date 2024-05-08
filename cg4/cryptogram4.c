@@ -1669,7 +1669,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
                 exit(1);
         }
 
-	memset(shmem, 0, 4096);
+	memset((char *)shmem, 0, 4 * 4096);
 
 	memcpy((char *)&rk3[0], (char *)&rk[Nr * 4], 16);
 	task = limit / NUMCORES;
@@ -1722,7 +1722,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 					(shmem[0 * j] == shmem[14 * j] ) &&
 					(shmem[0 * j] == shmem[15 * j])) {
 						for (int k = 0; k < 16; k++) {
-							printf("%02x", shmem[k * j] & 0xff);
+							printf("%01x", shmem[k * j]);
 						}
 						printf("\n");
 					}
