@@ -1705,7 +1705,27 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 		printf("dumping global debug\n");
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
-				fprintf(stderr, "%02x/%u,", j & 0xff, shmem[i * j]);
+				//fprintf(stderr, "%02x/%u,", j & 0xff, shmem[i * j]);
+				if ((shmem[0 * j] == shmem[1 * j]) &&
+					(shmem[0 * j] == shmem[2 * j] ) &&
+					(shmem[0 * j] == shmem[3 * j] ) &&
+					(shmem[0 * j] == shmem[4 * j] ) &&
+					(shmem[0 * j] == shmem[5 * j] ) &&
+					(shmem[0 * j] == shmem[6 * j] ) &&
+					(shmem[0 * j] == shmem[7 * j] ) &&
+					(shmem[0 * j] == shmem[8 * j] ) &&
+					(shmem[0 * j] == shmem[9 * j] ) &&
+					(shmem[0 * j] == shmem[10 * j] ) &&
+					(shmem[0 * j] == shmem[11 * j] ) &&
+					(shmem[0 * j] == shmem[12 * j] ) &&
+					(shmem[0 * j] == shmem[13 * j] ) &&
+					(shmem[0 * j] == shmem[14 * j] ) &&
+					(shmem[0 * j] == shmem[15 * j])) {
+						for (int k = 0; k < 16; k++) {
+							printf("%02x", shmem[k * j] & 0xff);
+						}
+						printf("\n");
+					}
 			}
 
 		}
