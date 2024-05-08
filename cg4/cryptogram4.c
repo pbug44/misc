@@ -1705,31 +1705,27 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 		printf("dumping global debug\n");
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
-				//fprintf(stderr, "%02x/%u,", j & 0xff, shmem[i * j]);
-				if ((shmem[0 * j] == shmem[1 * j]) &&
-					(shmem[0 * j] == shmem[2 * j] ) &&
-					(shmem[0 * j] == shmem[3 * j] ) &&
-					(shmem[0 * j] == shmem[4 * j] ) &&
-					(shmem[0 * j] == shmem[5 * j] ) &&
-					(shmem[0 * j] == shmem[6 * j] ) &&
-					(shmem[0 * j] == shmem[7 * j] ) &&
-					(shmem[0 * j] == shmem[8 * j] ) &&
-					(shmem[0 * j] == shmem[9 * j] ) &&
-					(shmem[0 * j] == shmem[10 * j] ) &&
-					(shmem[0 * j] == shmem[11 * j] ) &&
-					(shmem[0 * j] == shmem[12 * j] ) &&
-					(shmem[0 * j] == shmem[13 * j] ) &&
-					(shmem[0 * j] == shmem[14 * j] ) &&
-					(shmem[0 * j] == shmem[15 * j])) {
-						for (int k = 0; k < 16; k++) {
-							printf("%02x", ((k * j) % 0xff) & 0xff);
-						}
-						printf("\n");
+				if ((shmem[(16 * j) + i] == shmem[(1 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(2 * j) + i] ) &&
+					(shmem[(16 * j) + i] == shmem[(3 * j) + i] ) &&
+					(shmem[(16 * j) + i] == shmem[(4 * j) + i] ) &&
+					(shmem[(16 * j) + i] == shmem[(5 * j) + i] ) &&
+					(shmem[(16 * j) + i] == shmem[(6 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(7 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(8 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(9 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(10 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(11 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(12 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(13 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(14 * j) + i]) &&
+					(shmem[(16 * j) + i] == shmem[(15 * j) + i])) {
+						printf("%02x", (j & 0xff));
 					}
 			}
 
 		}
-		fprintf(stderr, "\n");
+		printf("\n");
 		unlink(".cg4-lock");
 		close(lfd);
 			
@@ -1833,7 +1829,7 @@ work:
 			memset(&find, 0, sizeof(find));
 			find.val = *shv;
 
-			counter[*shv * i]++;
+			counter[(*shv * 16) + i]++;
 
 			et = RB_FIND(inttree, &head, &find);
 			if (et == NULL) {
@@ -1891,7 +1887,7 @@ work:
 
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
-				shmem[i * j] += counter[i * j];
+				shmem[(j * 16) + i] += counter[(j * 16) + i];
 			}
 
 		}
