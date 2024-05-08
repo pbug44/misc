@@ -1784,10 +1784,10 @@ work:
 			uint64_t hi, lo, *shv;
 			struct entry *et, find;
 
-			hi = ((uint64_t)(rk3[1] & 0xffffffff) << 32) | \
-				(rk3[0] & 0xffffffff);
-			lo = ((uint64_t)(rk3[3] & 0xffffffff) << 32) | \
-				(rk3[2] & 0xffffffff);
+			hi = ((uint64_t)(rk3[0] & 0xffffffff) << 32) | \
+				(rk3[1] & 0xffffffff);
+			lo = ((uint64_t)(rk3[2] & 0xffffffff) << 32) | \
+				(rk3[3] & 0xffffffff);
 
 			if (i < 8)
 				shv = &hi;
@@ -1799,13 +1799,14 @@ work:
 			memset(&find, 0, sizeof(find));
 			find.val = *shv;
 
+			counter[*shv * i]++;
+
 			et = RB_FIND(inttree, &head, &find);
 			if (et == NULL) {
 				tryencrypt = 1;
 				continue;
 			} 
 
-			counter[*shv * i]++;
 		}
 
 		if (mode && tryencrypt) {
