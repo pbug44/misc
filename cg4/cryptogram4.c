@@ -1702,24 +1702,24 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 		} while (lfd < 0 && att < 100);
 
 
-		printf("dumping global debug\n");
-		for (i = 0; i < 16; i++) {
+		printf("some arbitrary number\n");
+		for (i = 0; i < 1; i++) {
 			for (int j = 0; j < 256; j++) {
-				if ((shmem[(16 * j) + i] == shmem[(1 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(2 * j) + i] ) &&
-					(shmem[(16 * j) + i] == shmem[(3 * j) + i] ) &&
-					(shmem[(16 * j) + i] == shmem[(4 * j) + i] ) &&
-					(shmem[(16 * j) + i] == shmem[(5 * j) + i] ) &&
-					(shmem[(16 * j) + i] == shmem[(6 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(7 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(8 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(9 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(10 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(11 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(12 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(13 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(14 * j) + i]) &&
-					(shmem[(16 * j) + i] == shmem[(15 * j) + i])) {
+				if ((shmem[(255 * i) + j] == shmem[(1 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(2 * 255) + j] ) &&
+					(shmem[(255 * i) + j] == shmem[(3 * 255) + j] ) &&
+					(shmem[(255 * i) + j] == shmem[(4 * 255) + j] ) &&
+					(shmem[(255 * i) + j] == shmem[(5 * 255) + j] ) &&
+					(shmem[(255 * i) + j] == shmem[(6 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(7 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(8 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(9 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(10 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(11 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(12 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(13 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(14 * 255) + j]) &&
+					(shmem[(255 * i) + j] == shmem[(15 * 255) + j])) {
 						printf("%02x", (j & 0xff));
 					}
 			}
@@ -1819,17 +1819,19 @@ work:
 			lo = ((uint64_t)(rk3[0] & 0xffffffff) << 32) | \
 				(rk3[1] & 0xffffffff);
 
-			if (i < 8)
+			if (i < 8) {
 				shv = &hi;
-			else
+
+			} else {
 				shv = &lo;
+			}
 				
 			*shv = (*shv >> ((i % 8) * 8)) & 0xff;
 			
 			memset(&find, 0, sizeof(find));
 			find.val = *shv;
 
-			counter[(*shv * 16) + i]++;
+			counter[(*shv) + (255 * i)]++;
 
 			et = RB_FIND(inttree, &head, &find);
 			if (et == NULL) {
@@ -1887,7 +1889,7 @@ work:
 
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
-				shmem[(j * 16) + i] += counter[(j * 16) + i];
+				shmem[(i * 255) + j] += counter[(i * 255) + j];
 			}
 
 		}
