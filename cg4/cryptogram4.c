@@ -17,7 +17,7 @@
 
 #include "rijndael.h"
 
-#define NUMCORES 2
+#define NUMCORES 3
 
 void gosh(u32 *, int, const void *, const void *, char *, int);
 void display(int round, u32 *rk);
@@ -1633,7 +1633,7 @@ reverse_test(int mode)
 void
 gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 {
-	char *shmem;
+	u32 *shmem;
 	u32 rk2[64];
 	u32 rk3[64];
 	u8 *pt = (u8 *)ptv;
@@ -1661,7 +1661,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 
 	i = 0;
 
-       shmem = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED |\
+       shmem = (u32 *)mmap(NULL, 4 * 4096, PROT_READ | PROT_WRITE, MAP_SHARED |\
                 MAP_ANON, -1, 0);
 
         if (shmem == MAP_FAILED) {
@@ -1798,10 +1798,10 @@ work:
 			uint64_t hi, lo, *shv;
 			struct entry *et, find;
 
-			hi = ((uint64_t)(rk3[0] & 0xffffffff) << 32) | \
-				(rk3[1] & 0xffffffff);
-			lo = ((uint64_t)(rk3[2] & 0xffffffff) << 32) | \
+			hi = ((uint64_t)(rk3[2] & 0xffffffff) << 32) | \
 				(rk3[3] & 0xffffffff);
+			lo = ((uint64_t)(rk3[0] & 0xffffffff) << 32) | \
+				(rk3[1] & 0xffffffff);
 
 			if (i < 8)
 				shv = &hi;
@@ -1820,7 +1820,6 @@ work:
 				tryencrypt = 1;
 				continue;
 			} 
-
 		}
 
 		if (mode && tryencrypt) {
