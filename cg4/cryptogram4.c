@@ -1672,6 +1672,8 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	task = limit / NUMCORES;
 
 	if (NUMCORES >= 1) {
+		int att = 0;
+
 		task = limit / NUMCORES;
 		for (i = 0; i < NUMCORES; i++) {
 			pid = fork();
@@ -1690,6 +1692,13 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 		for (int i = 0; i < NUMCORES; i++)
 			pid = wait(&status);
 
+		do {
+			att++;
+			lfd = open(".cg4-lock", O_WRONLY | O_CREAT | O_EXCL | O_EXLOCK, 0600);
+			sleep(10);
+		} while (lfd < 0 && att < 100);
+
+
 		printf("dumping global debug\n");
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
@@ -1698,6 +1707,8 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 
 		}
 		fprintf(stderr, "\n");
+		unlink(".cg4-lock");
+		close(lfd);
 			
 		printf("exiting waiting parent\n");
 		exit(0);
@@ -1862,6 +1873,7 @@ work:
 			}
 
 		}
+#if 0
 
 		printf("dumping cpu%d debug\n", cpu);
 		for (i = 0; i < 16; i++) {
@@ -1871,6 +1883,7 @@ work:
 
 		}
 		fprintf(stderr, "\n");
+#endif
 
 		unlink(".cg4-lock");
 		close(lfd);
