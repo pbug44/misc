@@ -1,6 +1,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/tree.h>
+#include <sys/mman.h>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,7 +16,7 @@
 
 #include "rijndael.h"
 
-#define NUMCORES 1
+#define NUMCORES 2
 
 void gosh(u32 *, int, const void *, const void *, char *, int);
 void display(int round, u32 *rk);
@@ -1629,6 +1630,7 @@ reverse_test(int mode)
 void
 gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 {
+	char *shmem;
 	u32 rk2[64];
 	u32 rk3[64];
 	u8 *pt = (u8 *)ptv;
@@ -1636,6 +1638,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	u8 ct2[16];
 	char buf[512];
 	int status;
+	int lfd;
 
 	u32 s0, s1, s2, s3, t0, t1, t2, t3;
 	u32 v[4];
@@ -1654,6 +1657,16 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	u32 stats[32];
 
 	i = 0;
+
+       shmem = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED |\
+                MAP_ANON, -1, 0);
+
+        if (shmem == MAP_FAILED) {
+		perror("mmap");
+                exit(1);
+        }
+
+	memset(shmem, 0, 4096);
 
 	memcpy((char *)&rk3[0], (char *)&rk[Nr * 4], 16);
 	task = limit / NUMCORES;
@@ -1674,8 +1687,18 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 		}
 
 		setproctitle("waiting parent");
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < NUMCORES; i++)
 			pid = wait(&status);
+
+		printf("dumping global debug\n");
+		for (i = 0; i < 16; i++) {
+			for (int j = 0; j < 256; j++) {
+				fprintf(stderr, "%02x/%u,", j & 0xff, shmem[i * j]);
+			}
+
+		}
+		fprintf(stderr, "\n");
+			
 		printf("exiting waiting parent\n");
 		exit(0);
 	}
@@ -1822,7 +1845,24 @@ work:
 	}       
 
 	if (mode == 0) {
-		printf("dumping debug\n");
+		int att = 0;
+
+		/* 1000 seconds attempting to get a lock should be enough? */
+		do {
+			att++;
+			lfd = open(".cg4-lock", O_WRONLY | O_CREAT | O_EXCL | O_EXLOCK, 0600);
+			sleep(10);
+		} while (lfd < 0 && att < 100);
+
+
+		for (i = 0; i < 16; i++) {
+			for (int j = 0; j < 256; j++) {
+				shmem[i * j] += counter[i * j];
+			}
+
+		}
+
+		printf("dumping cpu%d debug\n", cpu);
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
 				fprintf(stderr, "%02x/%u,", j & 0xff, counter[i * j]);
@@ -1830,5 +1870,8 @@ work:
 
 		}
 		fprintf(stderr, "\n");
+
+		unlink(".cg4-lock");
+		close(lfd);
 	}
 }
