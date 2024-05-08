@@ -1722,7 +1722,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 					(shmem[0 * j] == shmem[14 * j] ) &&
 					(shmem[0 * j] == shmem[15 * j])) {
 						for (int k = 0; k < 16; k++) {
-							printf("%02x", shmem[k * j] & 0xff);
+							printf("%02x", (k * j) & 0xff);
 						}
 						printf("\n");
 					}
