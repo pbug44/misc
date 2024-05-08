@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <endian.h>
+#include <time.h>
 #include <err.h>
 
 #include "rijndael.h"
@@ -1570,13 +1571,15 @@ reverse_test(int mode)
 	u32 rk[64];
 	u32 rk2[64];
 	u32 rk3[64];
+	time_t now;
 
 	int i, Nr;
 
+	now = time(NULL);
 	memset((char *)&rk, 0, sizeof(rk));
 	memset((char *)&rk2, 0, sizeof(rk2));
 
-	printf("cg4 - searching for a particular key that is random...\n");
+	printf("cg4 - starting at %s", ctime(&now));
 	
 	uint32_t key[4] = { 0x1fccc3d2,0xc0ccd5f5,0xc1193abe,0xe67a03c3 };
 	uint32_t plain[4] = { 0xaaaaaaaa, 0xaaaaaaaa, 0xaaaaaaaa, 0xaaaaaaaa };
