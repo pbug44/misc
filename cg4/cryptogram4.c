@@ -1587,7 +1587,7 @@ reverse_test(int mode)
 
 
 	memset((u_char *)&plain, 0xAA, sizeof(plain));
-	//arc4random_buf((u_char *)&key, 16);
+	arc4random_buf((u_char *)&key, 16);
 	printf("the key we're hunting for\n");
 
 
@@ -1658,6 +1658,8 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	uint8_t save;
 	pid_t pid;
 	u32 stats[32];
+	int count;
+	u32 iso;
 
 	i = 0;
 
@@ -1701,10 +1703,48 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 			sleep(10);
 		} while (lfd < 0 && att < 100);
 
+		iso = 0;
+		for (i = 0; i < 16; i++) {
+			if (iso < shmem[(255 * i) + 0])
+				iso = shmem[(255 * i) + 0];
+		}
 
 		printf("some arbitrary number\n");
-		for (i = 0; i < 1; i++) {
+		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
+				if (shmem[(255 * i) + j] > iso)
+					continue;
+
+				count = 0;
+				for (int k = 0; k < 256; k++) {
+					if (shmem[(255 * i) + j] ==
+						shmem[(255 * i) + k]) {
+						
+							count++;
+					}
+				}
+
+				//if ((count >= 8) && (count <= 16)) {
+				{
+					printf("%d %08x ", count, shmem[(255 * i) + j]);
+					for (int k = 0; k < 256; k++) {
+						if (shmem[(255 * i) + j] ==
+							shmem[(255 * i) + k]) {
+							
+								printf("%02x", k & 0xff);
+							}
+						
+					}
+
+					printf("\n");
+				}
+
+
+			} 
+		}
+					
+					
+#if 0
 				if ((shmem[(255 * i) + j] == shmem[(1 * 255) + j]) &&
 					(shmem[(255 * i) + j] == shmem[(2 * 255) + j] ) &&
 					(shmem[(255 * i) + j] == shmem[(3 * 255) + j] ) &&
@@ -1722,9 +1762,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 					(shmem[(255 * i) + j] == shmem[(15 * 255) + j])) {
 						printf("%02x", (j & 0xff));
 					}
-			}
-
-		}
+#endif
 		printf("\n");
 		unlink(".cg4-lock");
 		close(lfd);
@@ -1827,17 +1865,18 @@ work:
 			}
 				
 			*shv = (*shv >> ((i % 8) * 8)) & 0xff;
-			
-			memset(&find, 0, sizeof(find));
-			find.val = *shv;
 
 			counter[(*shv) + (255 * i)]++;
+#if 0
+			memset(&find, 0, sizeof(find));
+			find.val = *shv;
 
 			et = RB_FIND(inttree, &head, &find);
 			if (et == NULL) {
 				tryencrypt = 1;
 				continue;
 			} 
+#endif
 		}
 
 		if (mode && tryencrypt) {
