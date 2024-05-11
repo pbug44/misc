@@ -17,7 +17,7 @@
 
 #include "rijndael.h"
 
-#define NUMCORES 3
+#define NUMCORES 1
 
 void gosh(u32 *, int, const void *, const void *, char *, int);
 void display(int round, u32 *rk);
@@ -777,6 +777,15 @@ mod(const u32 rk[/*4*(Nr + 1)*/], int Nr, const u8 pt[16], u8 ct[16], u32 v[4])
 	s1 = GETU32(pt +  4) ^ rk[1];
 	s2 = GETU32(pt +  8) ^ rk[2];
 	s3 = GETU32(pt + 12) ^ rk[3];
+
+#if 0
+	printf("mod s-state\n");
+	//printf("%08x", s0 & 0xffffffff);
+	printf("%08x", htobe32(s1 & 0xffffffff));
+	//printf("%08x", s2 & 0xffffffff);
+	////printf("%08x", s3 & 0xffffffff);
+	printf("\n");
+#endif
 #ifdef FULL_UNROLL
     /* round 1: */
    	t0 = Te0[s0 >> 24] ^ Te1[(s1 >> 16) & 0xff] ^ Te2[(s2 >>  8) & 0xff] ^ Te3[s3 & 0xff] ^ rk[ 4];
@@ -854,31 +863,39 @@ mod(const u32 rk[/*4*(Nr + 1)*/], int Nr, const u8 pt[16], u8 ct[16], u32 v[4])
 	 */
     r = Nr >> 1;
     for (;;) {
-	t0 =
+	v[0] = t0 =
 	    Te0[(s0 >> 24)       ] ^
 	    Te1[(s1 >> 16) & 0xff] ^
 	    Te2[(s2 >>  8) & 0xff] ^
 	    Te3[(s3      ) & 0xff] ^
 	    rk[4];
-	t1 =
+	v[1] = t1 =
 	    Te0[(s1 >> 24)       ] ^
 	    Te1[(s2 >> 16) & 0xff] ^
 	    Te2[(s3 >>  8) & 0xff] ^
 	    Te3[(s0      ) & 0xff] ^
 	    rk[5];
-	t2 =
+	v[2] = t2 =
 	    Te0[(s2 >> 24)       ] ^
 	    Te1[(s3 >> 16) & 0xff] ^
 	    Te2[(s0 >>  8) & 0xff] ^
 	    Te3[(s1      ) & 0xff] ^
 	    rk[6];
-	t3 =
+	v[3] = t3 =
 	    Te0[(s3 >> 24)       ] ^
 	    Te1[(s0 >> 16) & 0xff] ^
 	    Te2[(s1 >>  8) & 0xff] ^
 	    Te3[(s2      ) & 0xff] ^
 	    rk[7];
 
+#if DEBUG
+	printf("mod v-state\n");
+	printf("%08x", v[0] & 0xffffffff);
+	printf("%08x", v[1] & 0xffffffff);
+	printf("%08x", v[2] & 0xffffffff);
+	printf("%08x", v[3] & 0xffffffff);
+	printf("\n");
+#endif
 
 	rk += 8;
 	if (--r == 0) {
@@ -944,13 +961,20 @@ mod(const u32 rk[/*4*(Nr + 1)*/], int Nr, const u8 pt[16], u8 ct[16], u32 v[4])
 		rk[3];
 	PUTU32(ct + 12, s3);
 
+
+#if 0
 	v[0] = t0;
 	v[1] = t1;
 	v[2] = t2;
 	v[3] = t3;
+	printf("mod v-state\n");
+	printf("%08x", v[0] & 0xffffffff);
+	printf("%08x", v[1] & 0xffffffff);
+	printf("%08x", v[2] & 0xffffffff);
+	printf("%08x", v[3] & 0xffffffff);
+	printf("\n");
 
-
-
+#endif
 }
 
 
@@ -1233,25 +1257,41 @@ int
 main(int argc, char *argv[])
 {
 	struct entry *et;
-	int ch;
+	int ch, override = 0;
 	int mode = 0;
 	char buf[512];
+	char *ep;
 	FILE *f;
+	uint64_t cookie = 0, check;
 
-	while ((ch = getopt(argc, argv, "2")) != -1) {
+	while ((ch = getopt(argc, argv, "12f:i:o")) != -1) {
 		switch (ch) {
+		case '1':
+			mode = 1;
+			break;
 		case '2':
 			mode = 2;
 			break;	
 		case 'f':
 			file = optarg;
 			break;
+		case 'i':
+			cookie = strtoul(optarg, &ep, 16);
+			break;
+		case 'o':
+			override = 1;
+			break;
 		default:
 			break;
 		}
 	}
 
-	if (mode) {
+	if (mode && !override) {
+		printf("use override (-o) to override manual use of modes\n");	
+		exit(1);
+	}
+
+	if (mode == 2) {
 		f = fopen(file, "r");
 		if (f == NULL) {
 			errx(1, "%s", file);
@@ -1303,9 +1343,10 @@ display(int round, u32 *rk)
 	}
 #endif
 	for (i = 0; i < 4; i++) {
-		printf("%08x,", rk[i]);
+		printf("%08x,", rk[i] & 0xffffffff);
 	}
 	printf("\n");
+	fflush(stdout);
 }
 
 void
@@ -1582,41 +1623,34 @@ reverse_test(int mode)
 	printf("cg4 - starting at %s", ctime(&now));
 	
 	uint32_t key[4] = { 0x1fccc3d2,0xc0ccd5f5,0xc1193abe,0xe67a03c3 };
+	//uint32_t key[4] = { 0x1fccc3d2,0xffffffff, 0xffffffff, 0xffffffff };
+#if 0
+	//uint32_t key[4] = { 0xd65d1081, 0xf2d65f0b, 0x7861ca28, 0xeffe3436 };
+#endif
 	uint32_t plain[4] = { 0xaaaaaaaa, 0xaaaaaaaa, 0xaaaaaaaa, 0xaaaaaaaa };
 	uint32_t  cipher[4];
+	u32 v[4];
 
 
 	memset((u_char *)&plain, 0xAA, sizeof(plain));
-	arc4random_buf((u_char *)&key, 16);
-	printf("the key we're hunting for\n");
+	//arc4random_buf((u_char *)&key, 16);
+	//arc4random_buf((u_char *)&plain, 16);
+	printf("the t0/key we're hunting for\n");
 
 
 	Nr = rijndaelKeySetupEnc((u32 *)&rk2, (u8 *)key, 128); 
+#if 0
 	printf("setup:\n");
 	for (i = 0; i <= 12 ; i++) {
 		display(i, &rk2[i * 4]);
 	}
 	printf("\n");
-
-	rijndaelEncrypt((u32 *)&rk2, Nr, (char *)plain, (char *)cipher);
-
-#if 0
-	printf("after encrypt\n");
-	for (i = 0; i <= 12 ; i++) {
-		display(i, &rk2[i * 4]);
-	}
-	printf("\n");
-	
-	memset(&rk3, 0, sizeof(rk3));
-	memcpy(&rk3[Nr * 4], &rk2[Nr * 4], sizeof(rk3));
-	inverse_function((u32 *)&rk3, Nr);
-
-	printf("after compare\n");
-	for (i = 0; i <= 12 ; i++) {
-		display(i, &rk3[i * 4]);
-	}
-	printf("\n");
 #endif
+
+	mod((u32 *)&rk2, Nr, (char *)plain, (char *)cipher, v);
+
+	printf("%08x%08x%08x%08x\n", v[0] & 0xffffffff, v[1] & 0xffffffff, 
+		v[2] & 0xffffffff, v[3] & 0xffffffff);
 
 	printf("key   : ");
 	display(-1, &key[0]);
@@ -1624,6 +1658,7 @@ reverse_test(int mode)
 	display(-1, plain);	
 	printf("cipher: ");
 	display(-1, cipher);
+	fflush(stdout);
 
 	gosh(&rk2[0], Nr, plain, (void *)cipher, (void *)&key[0], mode);
 
@@ -1633,7 +1668,11 @@ reverse_test(int mode)
 void
 gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 {
+	FILE *pf, *output;
+
+	time_t now;
 	u32 *shmem;
+	u32 srk[64];			/* saved rk's */
 	u32 rk2[64];
 	u32 rk3[64];
 	u8 *pt = (u8 *)ptv;
@@ -1642,9 +1681,10 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	char buf[512];
 	int status;
 	int lfd;
+	int get = 0;
 
 	u32 s0, s1, s2, s3, t0, t1, t2, t3;
-	u32 v[4];
+	u32 vt[4], v[4];
 	uint64_t x, limit = 0xffffffffULL + 1;
 	u32 y;
 	uint64_t task;
@@ -1659,7 +1699,7 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	pid_t pid;
 	u32 stats[32];
 	int count;
-	u32 iso;
+	u32 iso, cookie;
 
 	i = 0;
 
@@ -1709,7 +1749,11 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 				iso = shmem[(255 * i) + 0];
 		}
 
-		printf("some arbitrary number\n");
+		output = fopen("output", "w");
+		if (output == NULL) {
+			perror("fopen");
+			exit(1);
+		}
 		for (i = 0; i < 16; i++) {
 			for (int j = 0; j < 256; j++) {
 				if (shmem[(255 * i) + j] > iso)
@@ -1726,48 +1770,61 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 
 				//if ((count >= 8) && (count <= 16)) {
 				{
-					printf("%d %08x ", count, shmem[(255 * i) + j]);
+					fprintf(output, "%d %08x ", count, shmem[(255 * i) + j]);
 					for (int k = 0; k < 256; k++) {
 						if (shmem[(255 * i) + j] ==
 							shmem[(255 * i) + k]) {
 							
-								printf("%02x", k & 0xff);
+								fprintf(output, "%02x", k & 0xff);
 							}
 						
 					}
 
-					printf("\n");
+					fprintf(output, "\n");
 				}
 
 
 			} 
 		}
-					
-					
-#if 0
-				if ((shmem[(255 * i) + j] == shmem[(1 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(2 * 255) + j] ) &&
-					(shmem[(255 * i) + j] == shmem[(3 * 255) + j] ) &&
-					(shmem[(255 * i) + j] == shmem[(4 * 255) + j] ) &&
-					(shmem[(255 * i) + j] == shmem[(5 * 255) + j] ) &&
-					(shmem[(255 * i) + j] == shmem[(6 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(7 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(8 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(9 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(10 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(11 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(12 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(13 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(14 * 255) + j]) &&
-					(shmem[(255 * i) + j] == shmem[(15 * 255) + j])) {
-						printf("%02x", (j & 0xff));
-					}
+		fclose(output);
+
+#if LATER
+		for (int i = 0; i < (255 * 16); i++) {
+			for (int j = 0; j < (255 * 16); j++) {
+				if (shmem[i] == shmem[j]) {
+					printf("group %u val %u\n", shmem[i],
+						j);
+				}
+			}
+		}
 #endif
+		exit(0);
+		if (! mode) {
+			pf = popen("./lionscript.sh", "w");
+			if (pf == NULL) {
+				perror("popen");
+				exit(1);
+			}
+			for (i = 0; i < 16; i++) {
+				for (int j = 0; j < 256; j++) {
+					fprintf(pf, "%02x/%u,", j & 0xff, shmem[i * j]);
+				}
+			}
+			pclose(pf);
+		}
+					
+					
 		printf("\n");
 		unlink(".cg4-lock");
 		close(lfd);
 			
-		printf("exiting waiting parent\n");
+		if (! mode) {
+			cookie = arc4random();
+			snprintf(buf, sizeof(buf), "%u", cookie);
+			setenv("COOKIE", buf, 1);
+			execl("./cryptogram4", "cryptogram4", "-2", NULL);
+			printf("execl failed!\n");
+		}
 		exit(0);
 	}
 
@@ -1777,11 +1834,19 @@ work:
 		cpu, (task * cpu), task * (cpu + 1));
 
 	printf("%s\n", buf);
+	fflush(stdout);
 	setproctitle("%s", buf);
 
 	memset(&counter, 0, sizeof(counter));
 
 	for (x = (task * cpu); x < (task * (cpu + 1)); x++) {
+		if (cpu == 0) {
+			if (x && (x % 100000000 == 0)) {
+				now = time(NULL);
+				printf("100 million marker %s", ctime(&now));
+				fflush(stdout);
+			}
+		}
 
 	// 62b991a3,253c2425,a8936d37,0666599b
 #if 0
@@ -1790,10 +1855,17 @@ work:
 		t3 = 0x0666599b;
 		t0 = 0x62b991a3;
 #else
+#if trial
 		t1 = 0xe3e3e3e3;	
 		t2 = 0xe3e3e3e3;	
 		t3 = 0xe3e3e3e3;	
-		t0 = x;
+#endif
+#if 0
+		t3 = ((x << 24) & 0xff000000) | (x >> 8);
+		t2 = ((x << 16) & 0xffff0000) | (x >> 16);
+		t1 = ((x << 8)  & 0xffffff00) | (x >> 24);
+#endif
+		t3 = t2 = t1 = t0 = x;
 #endif
 
 		s0 = GETU32((u8 *)ctv + 0);
@@ -1810,52 +1882,221 @@ work:
 		memset(rk, 0, (4 * 64));
 		i = (Nr * 4);
 		
-		rk[i + 3] =
+		srk[i + 3] = rk[i + 3] =
 			(Te2[(t3 >> 24) & 0xff] & 0xff000000) ^
 			(Te3[(t0 >> 16) & 0xff] & 0x00ff0000) ^
 			(Te0[(t1 >>  8) & 0xff] & 0x0000ff00) ^
 			(Te1[(t2 >>  0) & 0xff] & 0x000000ff) ^
 			s3;
 
-		rk[i + 2] =
+		srk[i + 2] = rk[i + 2] =
 			(Te2[(t2 >> 24) & 0xff] & 0xff000000) ^
 			(Te3[(t3 >> 16) & 0xff] & 0x00ff0000) ^
 			(Te0[(t0 >>  8) & 0xff] & 0x0000ff00) ^
 			(Te1[(t1 >>  0) & 0xff] & 0x000000ff) ^
 			s2;
 
-		rk[i + 1] =
+		srk[i + 1] = rk[i + 1] =
 			(Te2[(t1 >> 24 ) & 0xff] & 0xff000000) ^
 			(Te3[(t2 >> 16) & 0xff] & 0x00ff0000) ^
 			(Te0[(t3 >>  8) & 0xff] & 0x0000ff00) ^
 			(Te1[(t0 >>  0) & 0xff] & 0x000000ff) ^
 			s1;
 
-		rk[i + 0] =
+		srk[i + 0] = rk[i + 0] =
 			(Te2[(t0 >> 24 ) & 0xff] & 0xff000000) ^
 			(Te3[(t1 >> 16) & 0xff] & 0x00ff0000) ^
 			(Te0[(t2 >>  8) & 0xff] & 0x0000ff00) ^
 			(Te1[(t3 >>  0) & 0xff] & 0x000000ff) ^
 			s0;
 
-		inverse_function(&rk[0], Nr);
-		rk[0] = htobe32(rk[0]);
-		rk[1] = htobe32(rk[1]);
-		rk[2] = htobe32(rk[2]);
-		rk[3] = htobe32(rk[3]);
 
-		memset(&rk3, 0, sizeof(rk3));
-		Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&rk[0], 128); 
-		mod((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2, (u32 *)&v);
+		t0 = (Te2[(t2 >> 0) & 0xff] & 0xff000000) |
+			(Te1[(t1 >> 0) & 0xff] & 0x000000ff) |
+			(Te0[(x >> 0) & 0xff] & 0x0000ff00) |
+			(Te3[(t3 >> 0) & 0xff] & 0x00ff0000);
+
+		t1 = (Te3[(t3 >> 8) & 0xff] & 0x00ff0000) |
+			(Te2[(t2 >> 8) & 0xff] & 0xff000000) |
+			(Te1[(t1 >> 8) & 0xff] & 0x000000ff) |
+			(Te0[(x >> 8) & 0xff] & 0x0000ff00);
+
+		t2 = (Te0[(x >> 16) & 0xff] & 0x0000ff00) |
+			(Te3[(t3 >> 16) & 0xff] & 0x00ff0000) |
+			(Te2[(t2 >> 16) & 0xff] & 0xff000000) |
+			(Te1[(t1 >> 16) & 0xff] & 0x000000ff);
+
+		t3 = (Te1[(t1 >> 24) & 0xff] & 0x000000ff) |
+			(Te0[(x >> 24) & 0xff] & 0x0000ff00) |
+			(Te3[(t3 >> 24) & 0xff] & 0x00ff0000) |
+			(Te2[(t2 >> 24) & 0xff] & 0xff000000);
+
+
+		s0 = Te0[(t0 >> 24)       ] ^
+		    Te1[(t1 >> 16) & 0xff] ^
+		    Te2[(t2 >>  8) & 0xff] ^
+		    Te3[(t3      ) & 0xff];
+
+
+		s1 = Te0[(t1 >> 24)       ] ^
+		    Te1[(t2 >> 16) & 0xff] ^
+		    Te2[(t3 >>  8) & 0xff] ^
+		    Te3[(t0      ) & 0xff];
+
+		s2 = Te0[(t2 >> 24)       ] ^
+		    Te1[(t3 >> 16) & 0xff] ^
+		    Te2[(t0 >>  8) & 0xff] ^
+		    Te3[(t1      ) & 0xff];
+
+		s3 = Te0[(t3 >> 24)       ] ^
+		    Te1[(t0 >> 16) & 0xff] ^
+		    Te2[(t1 >>  8) & 0xff] ^
+		    Te3[(t2      ) & 0xff];
+
+		t0 = Te0[(s0 >> 24)       ] ^
+		    Te1[(s1 >> 16) & 0xff] ^
+		    Te2[(s2 >>  8) & 0xff] ^
+		    Te3[(s3      ) & 0xff];
+
+
+		t1 = Te0[(s1 >> 24)       ] ^
+		    Te1[(s2 >> 16) & 0xff] ^
+		    Te2[(s3 >>  8) & 0xff] ^
+		    Te3[(s0      ) & 0xff];
+
+
+		t2 = Te0[(s2 >> 24)       ] ^
+		    Te1[(s3 >> 16) & 0xff] ^
+		    Te2[(s0 >>  8) & 0xff] ^
+		    Te3[(s1      ) & 0xff];
+
+		t3 = Te0[(s3 >> 24)       ] ^
+			Te1[(s0 >> 16) & 0xff] ^
+            		Te2[(s1 >>  8) & 0xff] ^
+            		Te3[(s2      ) & 0xff];
+
+		r = Nr >> 1;
+		i -= 8;
+
+		for (;;) {
+
+			rk[i + 7] = t3;
+			rk[i + 6] = t2;
+			rk[i + 5] = t1;
+			rk[i + 4] = t0;
+
+			/* get the old values of sX */
+
+			s0 = Te0[(t0 >> 24)       ] ^
+			    Te1[(t1 >> 16) & 0xff] ^
+			    Te2[(t2 >>  8) & 0xff] ^
+			    Te3[(t3      ) & 0xff];
+
+
+			s1 = Te0[(t1 >> 24)       ] ^
+			    Te1[(t2 >> 16) & 0xff] ^
+			    Te2[(t3 >>  8) & 0xff] ^
+			    Te3[(t0      ) & 0xff];
+
+			s2 = Te0[(t2 >> 24)       ] ^
+			    Te1[(t3 >> 16) & 0xff] ^
+			    Te2[(t0 >>  8) & 0xff] ^
+			    Te3[(t1      ) & 0xff];
+
+			s3 = Te0[(t3 >> 24)       ] ^
+			    Te1[(t0 >> 16) & 0xff] ^
+			    Te2[(t1 >>  8) & 0xff] ^
+			    Te3[(t2      ) & 0xff];
+
+
+#if 0
+			printf("gosh s-state\n");
+			printf("%08x", s0 & 0xffffffff);
+			printf("%08x", s1 & 0xffffffff);
+			printf("%08x", s2 & 0xffffffff);
+			printf("%08x", s3 & 0xffffffff);
+			printf("\n");
+#endif
+
+		        if (--r == 0) {
+            			break;
+        		}
+
+			rk[i + 3]  = s3;
+			rk[i + 2] = s2;
+			rk[i + 1] = s1;
+			rk[i + 0] = s0;
+
+    			i -= 8;
+
+			t0 = Te0[(s0 >> 24)       ] ^
+			    Te1[(s1 >> 16) & 0xff] ^
+			    Te2[(s2 >>  8) & 0xff] ^
+			    Te3[(s3      ) & 0xff];
+
+
+			t1 = Te0[(s1 >> 24)       ] ^
+			    Te1[(s2 >> 16) & 0xff] ^
+			    Te2[(s3 >>  8) & 0xff] ^
+			    Te3[(s0      ) & 0xff];
+
+
+			t2 = Te0[(s2 >> 24)       ] ^
+			    Te1[(s3 >> 16) & 0xff] ^
+			    Te2[(s0 >>  8) & 0xff] ^
+			    Te3[(s1      ) & 0xff];
+
+			t3 = Te0[(s3 >> 24)       ] ^
+            			Te1[(s0 >> 16) & 0xff] ^
+            			Te2[(s1 >>  8) & 0xff] ^
+            			Te3[(s2      ) & 0xff];
+
+		} 	
+
+		vt[0] = t0;
+                vt[1] = t1;
+                vt[2] = t2;
+                vt[3] = t3;
+
+		inverse_function(&rk[0], Nr);
+		/* XXX srk becomes rkX here! */
+		rk[0] = htobe32(srk[0]);
+		rk[1] = htobe32(srk[1]);
+		rk[2] = htobe32(srk[2]);
+		rk[3] = htobe32(srk[3]);
+
+		if (mode == 1) {
+			memset(&rk3, 0, sizeof(rk3));
+			Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&rk[0], 128); 
+			mod((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2, (u32 *)&v);
+			display(-1, &v[0]);
+			fflush(stdout);
+		} else {
+			//display(-1, ptv);
+			memset(&rk3, 0, sizeof(rk3));
+			Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&rk[0], 128); 
+			mod((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2, (u32 *)&v);
+		}
+
+#if 0
+		display(-1, (pt[4] ^ rk[1]));
+		if ((vt[0] & 0x00ffffff) == (htobe32(pt[4] ^ rk[1]) & 0x00ffffff)) {
+
+			printf("possible 32 bit key is:");
+			display(-1, &rk[0]);
+			fflush(stdout);
+		}
+#endif
+
 
 		for (i = 0; i < 16; i++) {
 			uint64_t hi, lo, *shv;
 			struct entry *et, find;
 
-			hi = ((uint64_t)(rk3[2] & 0xffffffff) << 32) | \
-				(rk3[3] & 0xffffffff);
-			lo = ((uint64_t)(rk3[0] & 0xffffffff) << 32) | \
-				(rk3[1] & 0xffffffff);
+			hi = ((uint64_t)(rk3[3] & 0xffffffff) << 32) | \
+				(rk3[2] & 0xffffffff);
+			lo = ((uint64_t)(rk3[1] & 0xffffffff) << 32) | \
+				(rk3[0] & 0xffffffff);
 
 			if (i < 8) {
 				shv = &hi;
@@ -1867,53 +2108,84 @@ work:
 			*shv = (*shv >> ((i % 8) * 8)) & 0xff;
 
 			counter[(*shv) + (255 * i)]++;
-#if 0
-			memset(&find, 0, sizeof(find));
-			find.val = *shv;
+			if (mode == 2) {
+				memset(&find, 0, sizeof(find));
+				find.val = *shv;
 
-			et = RB_FIND(inttree, &head, &find);
-			if (et == NULL) {
-				tryencrypt = 1;
-				continue;
-			} 
-#endif
-		}
-
-		if (mode && tryencrypt) {
-			u8 tbuf[16];
-			u8 sw;
-			PUTU32((u8 *)&tbuf[0], rk[0]);
-			PUTU32((u8 *)&tbuf[4], rk[1]);
-			PUTU32((u8 *)&tbuf[8], rk[2]);
-			PUTU32((u8 *)&tbuf[12],rk[3]);
-
-			for (i = 0; i < 16; i++) {
-				for (int j = 0; j < 16; j++) {
-					sw = tbuf[j];
-					tbuf[j] = tbuf[i];
-					tbuf[i] = sw;
-
-					/* XXX this needs to utilize hardware encryption to really be speedy */
-					Nr2 = rijndaelKeySetupEnc((u32 *)&rk3, (u8 *)&tbuf[0], 128); 
-					rijndaelEncrypt((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2);
-					
-
-					if (memcmp((char *)&ct2[0], (char *)&ctv, 16) == 0) {
-
-						printf("found key, displaying\n");
-
-						for (i = 0; i < 1 ; i++) {
-							display(i, &rk3[0]);
-						}
-						printf("\n");
-						exit(0);
-					}
+				et = RB_FIND(inttree, &head, &find);
+				if (et != NULL) {
+					tryencrypt = 1;
+					continue;
+				} else {
+					tryencrypt = 0;
+					break;
 				}
 			}
-	
-			tryencrypt = 0;
 		}
-	}       
+
+
+#if 0
+		if (mode == 2 && tryencrypt) {
+#else
+		{
+#endif
+			rijndaelEncrypt((u32 *)&rk3, Nr2, ptv, (u8 *)&ct2);
+					
+#if 0
+
+			display(-1, &vt[0]);
+			display(-1, &v[0]);
+#endif
+			for (int j = 0; j < 4; j++) {
+			for (int w = 0; w < 1; w++) {
+			//PUTU32U(key, y);
+			{
+#if 0
+				printf("0. %08x\n", vt[w] ^ rk3[(j + 0) % 4]);
+				printf("1. %08x * \n", vt[w] ^ rk3[(j + 1) % 4]);
+				printf("2. %08x\n", vt[w] ^ rk3[(j + 2) % 4]);
+				printf("3. %08x * \n", vt[w] ^ rk3[(j + 3) % 4]);
+#endif
+
+				if (((vt[w] ^ rk3[(j + 1) % 4]) & 0xffffff00) == 
+				((vt[0] ^ rk3[(j + 3) % 4]) & 0xffffff00)) {
+				printf("found key candidate, displaying\n");
+				printf("x == %08llx\n", x & 0xffffffff);
+
+#if 0
+				for (i = 0; i < 12 ; i++) {
+					display(i, &rk3[0]);
+				}
+				printf("\n");
+#endif
+
+				}
+			}
+			} /* w */
+			} /* j */
+			
+
+			
+			if ((((vt[0] ^ rk3[1]) & 0xffffff00) == 
+				((vt[0] ^ rk3[3]) & 0xffffff00)) ||
+				memcmp(ctv, (u_char *)&ct2, 4) == 0) {
+				printf("found key candidate, displaying\n");
+				printf("x == %08llx\n", x & 0xffffffff);
+
+				for (i = 0; i < 12 ; i++) {
+					display(i, &rk3[0]);
+				}
+				printf("\n");
+
+				printf("t0-t3:");
+				display(-1, &v[0]);
+				fflush(stdout);
+			}
+
+		}
+
+		tryencrypt = 0;
+	}
 
 	if (mode == 0) {
 		int att = 0;
