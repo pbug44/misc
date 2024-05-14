@@ -1170,7 +1170,6 @@ gosh(u32 *rk, int Nr, const void *ptv, const void *ctv, char *key, int mode)
 	memcpy((char *)&rk3[0], (char *)&rk[Nr * 4], 16);
 	task = limit / NUMCORES;
 
-goto work;
 	if (NUMCORES >= 1) {
 		task = limit / NUMCORES;
 		for (i = 0; i < NUMCORES; i++) {
