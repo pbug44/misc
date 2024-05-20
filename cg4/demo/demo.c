@@ -1664,6 +1664,13 @@ work:
 			prk3[m] = temp;
 		}
 #endif
+		/* 
+		 * at this point in time, I changed direction and went for
+		 * breaking the key instead of the state, because I saw
+		 * something.  If it fails, we'll go back up to the deadened
+		 * code and continue looking for states.
+	         */
+
 		pivot_break((u32 *)&rk3[0], VERTICAL);
 		pivot_break((u32 *)&rk3[0], HORIZONTAL);
 
