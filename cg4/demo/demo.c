@@ -1563,7 +1563,6 @@ work:
 		fflush(stdout);
 		
 		printf("pt's staircase\n");
-		/* no spoon? no soup 4 you! */
 		flip_spoon2(&rk3[0], Nr);
 
 		mod((u32 *)&rk3[0], Nr, 4, (char *)ptv, (u8 *)&ct2, (u32 *)&v, (u32 *)&s5);
@@ -1761,7 +1760,6 @@ finish:
 		fflush(stdout);
 		
 		printf("pt's staircase\n");
-		/* no spoon? no soup 4 you! */
 		flip_spoon2(&rk3[0], Nr);
 
 		mod((u32 *)&rk3[0], Nr, 4, (char *)ptv, (u8 *)&ct2, (u32 *)&v, (u32 *)&s5);
