@@ -96,6 +96,22 @@
 #define HORIZONTAL 	21
 #define DISTANCES	(HORIZONTAL + VERTICAL)
 
+/* 
+ * you ever play origami-type games?  This is the concept of the pivots
+ * where you fold along one pivot and transfer the symmetric location to
+ * the other pivot, for some reason it works.  In this demo code it actually
+ * finds the first byte on the VERTICAL slope.  The HORIZONTAL code is not
+ * done yet but it is already proven to find some more.  There is a few
+ * bytes that won't be found.  Like byte 2.  I'll have to brute anything that
+ * isn't found I think.  The horizontal can bend like an 'L' as in a knight
+ * (german: springer) in chess.  It's distance is minimally 1 (because 0 is
+ * already covered in the vertical) and maximally 6 + 15, which mathematically
+ * takes us just before the next pivot (6), and 15 bytes to the right. 
+ * So the code for the horizontal is what is TODO.  It's a bit hard, and it
+ * has a "joint" which is really a pivot, but the concept of pivot is already
+ * used, so I called it a joint.  Think of it like CanadARM, of space shuttle.
+ */
+
 struct pivot {
 	struct distance {
 		u8 pivot[ROW];
