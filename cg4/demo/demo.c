@@ -1193,47 +1193,6 @@ rijndaelEncrypt(const u32 rk[/*4*(Nr + 1)*/], int Nr, const u8 pt[16], u8 ct[16]
 	mod((u32 *)&rk[0], Nr, -1, pt, ct, &v[0], &rs5[0]);
 }
 
-/* 
- * Copyright (c) 2022-2024 Peter J. Philipp
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. The name of the author may not be used to endorse or promote products
- *    derived from this software without specific prior written permission
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
- * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
- * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
- * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
- */
-
-/*
- * my attempt at breaking 128 bit AES.  In function ct2pt... there is 
- * 4.2 billion iterations of building the inverse 11 roundkeys.  The inverse
- * function and that functoin are both my own creation.  The rest is mostly
- * from OpenBSD's rijndael.c.
- * I did some preliminary guesses at how long this would take and it requires
- * storage space for roughly 850 GB, and if writing to a memory file system
- * this would take roughly 15 hours on my 2015 core i5 laptop, on one core.
- * though this can be scaled higher as workload is distributed.  I believe
- * with this AES may be broken, however.. I haven not proofed it yet.  It
- * will take a few days/weeks.  Happy 2nd May, 2024!
- */
-
 int
 main(int argc, char *argv[])
 {
