@@ -3269,7 +3269,7 @@ pivot_break(u32 *rk3, int dir)
 
 	u32 *prk3, *prk4, *prk5, *prk6;
 	int distances = ((dir == VERTICAL) ? 6 : DISTANCES - 6);
-	int diststart = ((dir == VERTICAL) ? 0 : 6);
+	int diststart = ((dir == VERTICAL) ? 0 : 7);
 
 
 	result = (u8 *)&rk3[27 * 4];
