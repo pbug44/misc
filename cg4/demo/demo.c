@@ -2233,6 +2233,7 @@ flip_spoon2(u32 *rk, int Nr)
 	return;
 }
 
+#if 0
 void
 mod2(u32 *rk, int Nr, int iround, u32 *s, int uhalf)
 {
@@ -2374,6 +2375,7 @@ mod2(u32 *rk, int Nr, int iround, u32 *s, int uhalf)
     }
 
 }
+#endif
 
 void
 mod3(u32 *rk, int Nr, int iround, u32 *s, int uhalf, int victory, u32 *v2)
