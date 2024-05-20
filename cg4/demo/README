@@ -7,6 +7,13 @@ Mon May 20 08:31:59 CEST 2024
 | (_| |  __/ | | | | | (_) / __/ ___) | (_) |
  \__,_|\___|_| |_| |_|\___/_____|____/ \___/ 
                                              
+A scientific effort to prove AES256 is weak.
+
+Hypothesis:
+
+	AES256 is broken in a near-complexity of 2 ^ 128
+
+Work:
 
 A demonstration for someone who wanted me to test a cipher as proof that
 the given t0-t3 values and cipher and plain the key is recoverable.
@@ -61,6 +68,32 @@ rijndaelEncryptSetup() which I called mod() over it.  Anyhow study my code if
 you dare.  If you are a newbie with code I wouldn't recommend it.  But go ahead
 we were all newbies at one point.
 
--pjp
+Read the comments in the code and the commit comments for more clues.
 
-PS: read the comments in the code and the commit comments for more clues.
+Conclusion:
+	TBD
+
+Aftermath if proven true:
+	Surely cryptographers are working in the thousands in the "west".  I'm
+just a dummy, so imagine what greatness someone smart can achieve.  It is my
+opinion that we must examine this cipher seriously and look for alternatives if
+broken.
+
+I personally have already switched to Chacha20-PolyXXXX for my encryption,
+although I have never looked at this.  Also my security products don't allow
+an IKE key exchange of non-AES/DES so I may have to go to a static key for
+IPSEC.  There is people that will abuse this, so if proven broken, noone's
+Wifi is secure, even if encrypted.  And all I wanted was to break my own 
+youtube videos, that I've been saving for the Quantum processor era.
+
+It is our right, as citizens of this globe to have security, even from our
+governments.  It's called privacy.
+
+Also, breaking AES may shatter ill dreams for war to start.  If Enigma break 
+shortened the war by 4 years, this should delay a war by at least 4 years until
+another generation of cipher is released.  Best luck to all of you!
+
+
+Aftermath if proven false:
+	Things go on as always.  Carry on.  Another attack will happen on the
+cipher some other time.
