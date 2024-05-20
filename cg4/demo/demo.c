@@ -2769,6 +2769,41 @@ round7_fixup(u32 *rk, u32 *s, u32 *vt)
 
 }
 
+/*
+ * the way this pivot break works is the following, based on byte 2 of this
+ * ciphertext/key.
+ *
+ * 
+ * (to cheat, we're looking for 0x03)
+ * 
+ * 1. round 14 pivot high 0x4c -> 0xa5
+ * 2. Pivot change with cross (X) from high to low, 0xa5 -> 0xf8
+ * 3. Pivot change, 0xf8 -> 0x4d
+ * 4. eliminate those on the row of 0x4d, that are also not on pivot 1 (2nd)
+ * 
+ * 5. none of them matched, (THE SEARCH ENDS)
+ * 
+ * to show how byte 1 works (the only one found with VERTICAL distance 1)
+ * 
+ * (to cheat, we're looking for 0xd1)
+ *
+ * 1. cross pivot change 0xff -> 0x7d
+ * 2. change pivot axis and cross pivot change 0x7d -> 0xa7
+ * 3. change pivot axis and cross pivot change 0xa7 -> 0xd2
+ * 4. elimininate from that line all the bytes that are on the pivot center
+ * 5. candidates left over are | 0xd2 and 0xa8 |
+ * 6. change pivot again and find the same spots of those candidates
+ * 7. candidates are now | 0x30 and 0xd2 |
+ * 8. return to pivot + 1 (this is a little unclear in my notes, but code works)
+ * 9. candidates are | 0x6f and 0xd1 |  (we now have found the match)
+ *
+ * statement:  it seems insane.  Yes it does.  But true difficulty is always
+ * 							that way to the "normal" person.  Just like magic to the non-
+ *							technologized person.  I admit I was struggling with making up
+ *							this method in my head, and stuck to it in a systemic manner.
+ *							It was a lot of brain energy.  I don't want to do that again..
+ *							(ever?).
+ */
 
 uint16_t *
 pivot_break(u32 *rk3, int dir)
