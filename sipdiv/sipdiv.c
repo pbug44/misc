@@ -213,15 +213,20 @@ struct tok {
 	{ SIP_DIV_MAX, NULL, NULL }
 };
 
+/* prototypes */
 
 int parse_payload(char *, int);
 int new_payload(char *, int);
 void destroy_payload(void);
 void add_header(char *, char *, int);
 int find_header(int);
+void savethis(char *, int);
+int reassemble(char *, int, int);
 
 int sip_compact = 1;
+int fraglen = 0;
 char *useragent = "User-Agent: AVM\r\n";
+char *fragbuf;
 
 int
 main(int argc, char *argv[])
@@ -232,6 +237,7 @@ main(int argc, char *argv[])
 	int ch, debug = 0;
 	int iphl = sizeof(struct ip);
 	int udphl = sizeof(struct udphdr);
+	int expect_frag = 0;
 
 	char buf[65535];
 	char abuf[INET6_ADDRSTRLEN];
@@ -256,6 +262,12 @@ main(int argc, char *argv[])
 			fprintf(stderr, "usage: sipdiv [-c][-d]\n");
 			exit (1);
 		}
+	}
+
+	fragbuf = malloc(65535);
+	if (fragbuf == NULL) {
+		perror("malloc");
+		exit(1);
 	}
 
 	SLIST_INIT(&head);
@@ -351,6 +363,17 @@ main(int argc, char *argv[])
 			goto skip;
 
 		iphl = (ip->ip_hl * 4);
+
+		if (expect_frag && (ntohs(ip->ip_off))) {
+			len = reassemble(buf, len, iphl);
+			ip->ip_off = htons(IP_DF);
+		}
+
+		if (ntohs(ip->ip_off) & IP_MF) {
+			savethis(buf, len);
+			expect_frag = 1;
+		} else
+			expect_frag = 0;
 
 		
 		if (len < (iphl + udphl))
@@ -735,4 +758,40 @@ add_header(char *header, char *contents, int type)
 		contents, strlen(contents));
 
 	SLIST_INSERT_HEAD(&head, n1, entries);
+}
+
+int
+reassemble(char *buf, int len, int iphdrlen)
+{
+	struct ip *ip;
+	struct udphdr *udp;
+	int udpoff;
+	int retlen;
+
+	
+	ip = (struct ip *)&fragbuf[0];
+	ip->ip_off = htons(IP_DF);
+	udpoff = ip->ip_hl * 4;
+
+	retlen =  len - iphdrlen;
+
+	udp = (struct udphdr *)&fragbuf[udpoff];
+	udp->uh_ulen = htons(ntohs(udp->uh_ulen) + (retlen));
+	udp->uh_sum = 0;
+
+	memcpy(&fragbuf[fraglen], &buf[iphdrlen], retlen);
+	retlen = len - iphdrlen;
+	retlen += fraglen;
+	
+	memcpy(&buf[0], &fragbuf[0],  retlen);
+	fraglen = 0;
+
+	return (retlen);
+}
+
+void
+savethis(char *buf, int len)
+{
+	memcpy(&fragbuf[0], &buf[0], len);
+	fraglen = len;
 }
