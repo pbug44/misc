@@ -93,8 +93,8 @@
 #define RESULT		4
 #define ROW		16
 #define VERTICAL	6
-#define HORIZONTAL 	21
-#define DISTANCES	(HORIZONTAL + VERTICAL)
+#define HORIZONTAL 	(ROW + VERTICAL)
+#define DISTANCES	VERTICAL
 
 /* 
  * you ever play origami-type games?  This is the concept of the pivots
@@ -2805,6 +2805,41 @@ round7_fixup(u32 *rk, u32 *s, u32 *vt)
  *							(ever?).
  */
 
+/*
+ * Improved explanation of algorithm
+ *
+ * we have a roundkey table from 0 through 28 we name these r0 through r28
+ * we have 5 pivot points every 7 rows, so P0, P1, P2, P3, P4 also we can
+ * call these for simplicity P0, P7, P14, P21, and P28 this just merges the
+ * rows with the pivots.  When we do a so-called pivot change it is upward.
+ * we start off at the beginning of P14 at every search.  We also have 
+ * defined a so-called
+ * cross-over called X, this changes the position of our numbers in symmetry
+ * with the pivot axis.  We also define distances away from the axis.  This
+ * could be 0 through 6 in both directions from the axis, we name this d0-d6.
+ *
+ * Algorithm:
+ *
+ *  let P = 2
+ *	for distance = 0 through 6
+ *		for column = 0 through 15
+ *			d(distance) X d(distance)
+ *			pivot change from #2 to #1 and X (cross over)
+ *      subtract distance from P2 upward, if you cross P0 the distance turns 
+ *				negative
+ *			add d(distance) 
+ *			for candidate = 0 through 15
+ *				eliminate those not uniq with lower P (so if P=0, P1 is meant here)
+ *			save candidates (there is up to 16)
+ *			X on pivot point P
+ *			if you happen to X into the negative r, let P = P4, d turns negative
+ *			and subtract r(d), if d is negative this is an addition
+ *			assemble a candidate matrix
+ *			brute force all candidates (XXX)
+ *
+ */
+
+
 uint16_t *
 pivot_break(u32 *rk3, int dir)
 {
@@ -2820,14 +2855,13 @@ pivot_break(u32 *rk3, int dir)
 	u32 lrow[4], endianrow[4];
 	int cpos = 0;
 	int i = 0, j;
+	int joint;
 
 	u32 *prk3, *prk4, *prk5, *prk6;
-	int distances = ((dir == VERTICAL) ? 6 : DISTANCES - 6);
-	int diststart = ((dir == VERTICAL) ? 0 : 7);
+	int distances = DISTANCES;
 
 
 	result = (u8 *)&rk3[27 * 4];
-	check = (u8 *)&rk3[13 * 4];
 
 	if (set_can++ == 0) {
 		memset((char *)&retval[0], 0xff, sizeof(retval));
@@ -2837,7 +2871,7 @@ pivot_break(u32 *rk3, int dir)
 
 	for (i = 0; i < PIVOTS; i++)  {
 		memset((char *)&pv[i], 0, sizeof(struct pivot));
-		for (int d = diststart; d < distances ; d++) {
+		for (int d = 0; d < 6 ; d++) {
 				for (int j = 0; j < (ROW); j++) {
 
 					prk3 = &rk3[((i * 7) * 4)];
@@ -2889,45 +2923,115 @@ pivot_break(u32 *rk3, int dir)
 				}
 			}
 
-			for (int d = 0; d < dir; d++) {
-			translate = &pv[TRANSLATE].d[d].high[0];
-			for (i = 0; i < ROW; i++) {
-				printf("checking row at spot %d\n", i);
-				if (check[i] == translate[i]) {
-					result = &pv[PCHANGE2].d[d].high[0];
+			if (dir == VERTICAL) {
+							for (int d = 0; d < distances; d++) {
+							translate = &pv[TRANSLATE].d[d].high[0];
+							for (i = 0; i < ROW; i++) {
+								printf("checking row (%d) at spot %d\n", d, i);
+								check = (u8 *)&rk3[13 * 4];
+								if (check[i] == translate[i]) {
+									result = &pv[PCHANGE2].d[d].high[0];
 #if DEBUG
-					printf("after pivot at %02x change to pivot %02x\n", 
-							result[i], pv[PCHANGE2].d[d].high[i]);
+									printf("after pivot at %02x change to pivot %02x\n", 
+											result[i], pv[PCHANGE2].d[d].high[i]);
 #endif
-					cpos = 0;
-					for (int e = 0; e < ROW; e++) {
+									cpos = 0;
+									for (int e = 0; e < ROW; e++) {
 #if DEBUG
-							printf("row %d distance: %d %02x\n", pv[PCHANGE2].row - 1, 
-									d, pv[PCHANGE2].d[d].high[e]);
+											printf("row %d distance: %d %02x\n", pv[PCHANGE2].row - 1, 
+													d, pv[PCHANGE2].d[d].high[e]);
 #endif
-						for (int f = 0; f < ROW; f++) {
-							if (pv[PCHANGE2].d[d].high[e] == pv[PCHANGE2].d[d].pivot[f]) {
-								for (int g = 0; g < ROW; g++) {
-									if (candidates[g] == pv[PCHANGE2].d[d].high[e])
-										goto skip_candidate;
-								}
-								candidates[cpos++] = pv[PCHANGE2].d[d].high[e];
+										for (int f = 0; f < ROW; f++) {
+											if (pv[PCHANGE2].d[d].high[e] == pv[PCHANGE2].d[d].pivot[f]) {
+												for (int g = 0; g < ROW; g++) {
+													if (candidates[g] == pv[PCHANGE2].d[d].high[e])
+														goto skip_candidate;
+												}
+												candidates[cpos++] = pv[PCHANGE2].d[d].high[e];
 
-								printf("candidate %02x\n", pv[PCHANGEC].d[d].pivot[e] & 0xff);
+												printf("candidate %02x\n", pv[PCHANGEC].d[d].pivot[e] & 0xff);
+											}
+
+				skip_candidate:
+									
+											continue;
+										}
+									}
+								} else {
+									printf("no match at row %d\n", i);
+								}
 							}
 
-skip_candidate:
-					
-							continue;
 						}
-					}
-				} else {
-					printf("no match at row %d\n", i);
+	}
+	
+	if (dir == HORIZONTAL) {
+				for (int d = 0; d < distances; d++) {
+								/* 7 - 16 == -8 % 6 = -2 and negate */
+								joint = d;
+
+							translate = &pv[TRANSLATE].d[joint].high[0];
+							for (i = 0; i < ROW; i++) {
+								printf("checking joint [%d] at spot %d\n", joint, i);
+								check = (u8 *)&rk3[((13 - joint) * 4)];
+								if (check[i % (ROW / 2)] == 
+												translate[ROW - (i % (ROW / 2))]) {
+									result = &pv[PCHANGE2].d[joint].high[ROW - (i % (ROW / 2))];
+#if DEBUG
+									printf("after pivot at %02x change to pivot %02x\n", 
+											result[i], pv[PCHANGE2].d[joint].high[i + (d - joint)]);
+#endif
+									cpos = 0;
+									for (int e = 0; e < ROW; e++) {
+#if DEBUG
+											/* XXX */
+											printf("row %d distance: %d %02x\n", 
+													pv[PCHANGE2].row - joint, 
+													d, pv[PCHANGE2].d[d].high[e]);
+#endif
+										for (int f = 0; f < ROW; f++) {
+											if (pv[PCHANGE2].d[joint].high[e] == pv[PCHANGE2].d[joint].pivot[f]) {
+												for (int g = 0; g < ROW; g++) {
+													if (candidates[g] == pv[PCHANGE2].d[joint].high[e])
+														goto skip_horizontal;
+												}
+												candidates[cpos++] = pv[PCHANGE2].d[joint].high[e];
+
+												printf("candidate %02x\n", pv[PCHANGEC].d[joint].pivot[e] & 0xff);
+											}
+
+skip_horizontal:
+											continue;
+										}
+									}
+								} else if (check[ROW - (i % (ROW / 2))] == 
+												translate[i % (ROW / 2)]) {
+									result = &pv[PCHANGE2].d[joint].high[ROW - (i % (ROW / 2))];
+									cpos = 0;
+									for (int e = 0; e < ROW; e++) {
+
+										for (int f = 0; f < ROW; f++) {
+											if (pv[PCHANGE2].d[joint].high[e] == pv[PCHANGE2].d[joint].pivot[f]) {
+												for (int g = 0; g < ROW; g++) {
+													if (candidates[g] == pv[PCHANGE2].d[joint].high[e])
+														goto skip_horizontal2;
+												}
+												candidates[cpos++] = pv[PCHANGE2].d[joint].high[e];
+
+												printf("candidate %02x\n", pv[PCHANGEC].d[joint].pivot[e] & 0xff);
+											}
+
+skip_horizontal2:
+											continue;
+										}
+									}
+								} else {
+									printf("no match at joint %d row %d\n", joint, i);
+								}
+							}
 				}
-			}
 
 		}
-
 
 	return (&retval[0]);
 }
