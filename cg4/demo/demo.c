@@ -2855,10 +2855,13 @@ pivot_break(u32 *rk3, int dir)
 	u32 lrow[4], endianrow[4];
 	int cpos = 0;
 	int i = 0, j;
+	int tr;
 	int joint;
 
 	u32 *prk3, *prk4, *prk5, *prk6;
 	int distances = DISTANCES;
+	char *tc, *tc2;
+	int tp;
 
 
 	result = (u8 *)&rk3[27 * 4];
@@ -2924,47 +2927,68 @@ pivot_break(u32 *rk3, int dir)
 			}
 
 			if (dir == VERTICAL) {
+							int p = 2;
+
 							for (int d = 0; d < distances; d++) {
-							translate = &pv[TRANSLATE].d[d].high[0];
+							translate = &pv[p].d[d].high[0];		/* aka X */
 							for (i = 0; i < ROW; i++) {
 								printf("checking row (%d) at spot %d\n", d, i);
-								check = (u8 *)&rk3[13 * 4];
-								if (check[i] == translate[i]) {
-									result = &pv[PCHANGE2].d[d].high[0];
+								check = (u8 *)&rk3[13 * 4];				/* aka rk13 */
+								p--;															/* P2 -> P1 */
+								result = &pv[p].d[d].high[0];			
 #if DEBUG
 									printf("after pivot at %02x change to pivot %02x\n", 
 											result[i], pv[PCHANGE2].d[d].high[i]);
 #endif
 									cpos = 0;
-									for (int e = 0; e < ROW; e++) {
 #if DEBUG
 											printf("row %d distance: %d %02x\n", pv[PCHANGE2].row - 1, 
 													d, pv[PCHANGE2].d[d].high[e]);
 #endif
-										for (int f = 0; f < ROW; f++) {
-											if (pv[PCHANGE2].d[d].high[e] == pv[PCHANGE2].d[d].pivot[f]) {
+								for (int e = 0; e < ROW; e++) {
+									for (int f = 0; f < ROW; f++) {
+
+											if (pv[p].d[d].high[e] == pv[p].d[d].pivot[f]) {
 												for (int g = 0; g < ROW; g++) {
-													if (candidates[g] == pv[PCHANGE2].d[d].high[e])
+													if (candidates[g] == pv[p].d[d].high[e])
 														goto skip_candidate;
+												  }
+													candidates[e] = pv[p].d[d].high[e];
 												}
-												candidates[cpos++] = pv[PCHANGE2].d[d].high[e];
 
-												printf("candidate %02x\n", pv[PCHANGEC].d[d].pivot[e] & 0xff);
+												tp = p - d; 
+												if (tp < 0) {						/* no loop needed d is <= 6 */
+														tp = (tp  % VERTICAL);
+														p = 5 - tp;
+												}
+
+												for (int g = 0; g < ROW; g++) {
+													if (candidates[g * i] == 0xffff)
+														continue;
+
+													if (candidates[g * i] == pv[p].d[d].high[g]) {
+
+														tr = rk3[((p * 7) * 4) - (4 * d)];
+														if (tr < 0) {
+															tr = (tr % VERTICAL);
+															p = (5 - (tr / 4));
+														}
+
+														tc = (char *)&rk3[((p * 7) * 4) - (4 * d)];
+														candidates[g * i] = tc[g];
+														printf("candidate %02x\n", candidates[g * i] & 0xff);
+
+													} 
 											}
-
-				skip_candidate:
-									
-											continue;
-										}
 									}
-								} else {
-									printf("no match at row %d\n", i);
-								}
-							}
-
+skip_candidate:
+											continue;
 						}
+				}
+		}
 	}
 	
+#if 0
 	if (dir == HORIZONTAL) {
 				for (int d = 0; d < distances; d++) {
 								/* 7 - 16 == -8 % 6 = -2 and negate */
@@ -3032,6 +3056,7 @@ skip_horizontal2:
 				}
 
 		}
+#endif
 
 	return (&retval[0]);
 }
